@@ -375,7 +375,7 @@ def render_login():
         with ui.card().classes('login-card shadow-lg'):
             ui.label('🚚 RotaOS').classes('login-brand')
             ui.label('O sistema operacional de quem vive de rota.').classes('muted text-sm')
-            ui.label('O sistema operacional de quem vive de rota.').classes('login-muted mb-4')
+    
             with ui.tabs().classes('w-full') as auth_tabs:
                 entrar_tab = ui.tab('Entrar')
                 criar_tab = ui.tab('Criar conta')
