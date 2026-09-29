@@ -613,7 +613,7 @@ def render_rotaos():
                     pending_box.clear()
                     with pending_box:
                         if not pending_proofs:
-                            ui.label('Nenum comprovante selecionado.').classes('muted')
+                            ui.label('Nenhum comprovante selecionado.').classes('muted')
                         for i, item in enumerate(pending_proofs):
                             with ui.row().classes('w-full items-center border rounded-lg p-2 gap-3'):
                                 ui.icon('image' if item['mime'].startswith('image/') else 'description')
@@ -723,7 +723,8 @@ def render_rotaos():
                 recalc()
 
             def unit(k, title, box):
-                if k+'q' in fields: return
+                if k+'q' in fields:
+                    return
                 with box:
                     row = ui.row().classes('dynamic-row w-full items-center gap-2')
                     with row:
@@ -731,70 +732,87 @@ def render_rotaos():
                         q = ui.input('Qtd.', value='0').props('outlined dense inputmode=numeric').classes('w-24')
                         rt = ui.label('sem faixa').classes('w-28 muted')
                         out = ui.label('R$ 0,00').classes('grow text-right font-bold')
-                        ui.button(icon='close', on_click=lambda: remove_dynamic(
-                            [k+'q', k+'rate', k+'out'], row
-                        )).props('flat round dense color=grey-7').classes('close-chip')
-                fields[k+'q']=q; fields[k+'rate']=rt; fields[k+'out']=out
-                q.on('input', lambda e: recalc()); recalc()
+                        ui.button(
+                            icon='close',
+                            on_click=lambda: remove_dynamic([k+'q', k+'rate', k+'out'], row),
+                        ).props('flat round dense color=grey-7').classes('close-chip')
+                fields[k+'q'] = q
+                fields[k+'rate'] = rt
+                fields[k+'out'] = out
+                q.on('blur', lambda e: recalc())
+                recalc()
 
             def cash(k, title, box):
-                if k in fields: return
+                if k in fields:
+                    return
                 with box:
                     row = ui.row().classes('dynamic-row w-full items-center gap-2')
                     with row:
                         ui.label(title).classes('w-40 font-bold')
-                        x = ui.input('Valor R$', value='0,00').props('outlined dense inputmode=decimal').classes('grow')
-                        ui.button(icon='close', on_click=lambda: remove_dynamic(
-                            [k], row
-                        )).props('flat round dense color=grey-7').classes('close-chip')
-                fields[k]=x; x.on('input', lambda e: recalc()); recalc()
+                        x = ui.input('Valor R$', value='0,00').props(
+                            'outlined dense inputmode=decimal'
+                        ).classes('grow')
+                        ui.button(
+                            icon='close',
+                            on_click=lambda: remove_dynamic([k], row),
+                        ).props('flat round dense color=grey-7').classes('close-chip')
+                fields[k] = x
+                x.on('blur', lambda e: recalc())
+                recalc()
 
-            bp.on('click', lambda: unit('p','📦 Pacotes',prod_box))
-            bs.on('click', lambda: unit('s','📍 Paradas',prod_box))
-            bk.on('click', lambda: unit('k','🚗 KM',prod_box))
-            boe.on('click', lambda: cash('oe','Outro adicional',prod_box))
-            bped.on('click', lambda: cash('ped','Pedágio reembolsável',reimb_box))
-            bore.on('click', lambda: cash('ore','Outro reembolso',reimb_box))
+            bp.on('click', lambda: unit('p', '📦 Pacotes', prod_box))
+            bs.on('click', lambda: unit('s', '📍 Paradas', prod_box))
+            bk.on('click', lambda: unit('k', '🚗 KM', prod_box))
+            boe.on('click', lambda: cash('oe', 'Outro adicional', prod_box))
+            bped.on('click', lambda: cash('ped', 'Pedágio reembolsável', reimb_box))
+            bore.on('click', lambda: cash('ore', 'Outro reembolso', reimb_box))
+
             def fuel():
-                if 'comb' in fields: return
+                if 'comb' in fields:
+                    return
                 with disc_box:
                     fuel_card = ui.column().classes('w-full dynamic-row gap-2')
                     with fuel_card:
                         with ui.row().classes('w-full items-center'):
                             ui.label('⛽ Combustível').classes('font-bold grow')
-                            ui.button(icon='close', on_click=lambda: remove_dynamic(
-                                ['comb','comb_mode'], fuel_card
-                            )).props('flat round dense color=grey-7').classes('close-chip')
+                            ui.button(
+                                icon='close',
+                                on_click=lambda: remove_dynamic(['comb', 'comb_mode'], fuel_card),
+                            ).props('flat round dense color=grey-7').classes('close-chip')
                         with ui.row().classes('w-full items-end gap-3 mobile-stack'):
-                            x = ui.input('Valor R$', value='0,00').props('outlined dense inputmode=decimal').classes('w-40')
+                            x = ui.input('Valor R$', value='0,00').props(
+                                'outlined dense inputmode=decimal'
+                            ).classes('w-40')
                             mode = ui.select(
                                 ['Pago pela transportadora', 'Descontado no pagamento', 'Reembolsável'],
                                 value='Pago pela transportadora',
                                 label='Tratamento financeiro',
                             ).props('outlined dense').classes('grow')
                         hint = ui.label('Não altera o valor a receber.').classes('muted text-sm')
+
                         def changed():
                             m = mode.value
                             hint.text = {
-                                'Pago pela transportadora':'Não altera o valor a receber.',
-                                'Descontado no pagamento':'Será subtraído da previsão de pagamento.',
-                                'Reembolsável':'Será somado ao valor que a transportadora deve pagar.',
+                                'Pago pela transportadora': 'Não altera o valor a receber.',
+                                'Descontado no pagamento': 'Será subtraído da previsão de pagamento.',
+                                'Reembolsável': 'Será somado ao valor que a transportadora deve pagar.',
                             }[m]
                             recalc()
-                        x.on('input', lambda e: changed())
+
+                        x.on('blur', lambda e: changed())
                         mode.on('update:model-value', lambda e: changed())
-                fields['comb']=x; fields['comb_mode']=mode; recalc()
+
+                fields['comb'] = x
+                fields['comb_mode'] = mode
+                recalc()
 
             bcomb.on('click', fuel)
             best.on('click', lambda: cash('est', 'Estacionamento', disc_box))
             bod.on('click', lambda: cash('od', 'Outro desconto', disc_box))
 
-            def atualizar_valor_fixo(e):
-                fixo_i.value = e.args
-                recalc()
-
-            fixo_i.on('update:model-value', atualizar_valor_fixo)
-            obs.on('input', lambda e: recalc())
+            # Recalcula o valor base apenas quando o usuário sai do campo.
+            # A observação não altera valores financeiros, então não chama recalc().
+            fixo_i.on('blur', lambda e: recalc())
 
             def clear_form():
                 empresa_i.value=''; rotaid_i.value=''; ref_i.value=''; destino_i.value=''
