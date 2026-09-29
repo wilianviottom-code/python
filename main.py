@@ -613,7 +613,7 @@ def render_rotaos():
                     pending_box.clear()
                     with pending_box:
                         if not pending_proofs:
-                            ui.label('Nenhum comprovante selecionado.').classes('muted')
+                            ui.label('Nenum comprovante selecionado.').classes('muted')
                         for i, item in enumerate(pending_proofs):
                             with ui.row().classes('w-full items-center border rounded-lg p-2 gap-3'):
                                 ui.icon('image' if item['mime'].startswith('image/') else 'description')
@@ -790,21 +790,11 @@ def render_rotaos():
             bod.on('click', lambda: cash('od', 'Outro desconto', disc_box))
 
             def atualizar_valor_fixo(e):
-                # Recalcula somente quando a edição do valor base é concluída.
-                # Evita um evento ao servidor a cada tecla digitada.
-                novo_valor = e.args
-                if isinstance(novo_valor, dict):
-                    novo_valor = novo_valor.get('value', novo_valor.get('modelValue', fixo_i.value))
-                elif isinstance(novo_valor, (list, tuple)):
-                    novo_valor = novo_valor[0] if novo_valor else fixo_i.value
-                if novo_valor not in (None, ''):
-                    fixo_i.value = novo_valor
+                fixo_i.value = e.args
                 recalc()
 
-            # Não usar update:model-value: ele dispara a cada tecla.
-            fixo_i.on('change', atualizar_valor_fixo)
-            fixo_i.on('blur', lambda e: recalc())
-            obs.on('change', lambda e: recalc())
+            fixo_i.on('update:model-value', atualizar_valor_fixo)
+            obs.on('input', lambda e: recalc())
 
             def clear_form():
                 empresa_i.value=''; rotaid_i.value=''; ref_i.value=''; destino_i.value=''
