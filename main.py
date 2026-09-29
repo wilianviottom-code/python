@@ -666,7 +666,7 @@ def render_rotaos():
 
                 with ui.card().classes('card p-5 w-full section'):
                     ui.label('💸 Despesas da rota').classes('title')
-                    ui.label('Só reduzem o pagamento quando realmente são descontados do motorista.').classes('muted mb-3')
+                    ui.label('Gastos que saíram do seu bolso durante a rota.').classes('muted mb-3')
                     with ui.row().classes('gap-2'):
                         bcomb = ui.button('+ Combustível').props('outline no-caps')
                         best = ui.button('+ Estacionamento').props('outline no-caps')
@@ -681,7 +681,7 @@ def render_rotaos():
             # Só são gravados e vinculados depois que a rota recebe um ID no banco.
             pending_proofs = []
             with ui.card().classes('w-full card p-5 mt-4'):
-                ui.label('📎 DOCUMENTOS DA ROTA').classes('title')
+                ui.label('📎 Documentos da rota').classes('title')
                 ui.label('Fotos, comprovantes, prints e PDFs relacionados à rota.').classes('muted text-sm')
                 pending_box = ui.column().classes('w-full gap-2 mt-3')
 
@@ -723,19 +723,19 @@ def render_rotaos():
                 def render_uploader():
                     upload_slot.clear()
                     with upload_slot:
-                        with ui.row().classes('w-full gap-2 items-start'):
+                        with ui.row().classes('w-full gap-2 items-center'):
                             ui.upload(
                                 label='ANEXAR ARQUIVO',
                                 on_upload=stage_proof,
                                 auto_upload=True,
                                 max_file_size=8_000_000,
-                            ).props('accept="image/*,.pdf" flat color=primary').classes('mt-2 grow')
+                            ).props('accept="image/*,.pdf" flat color=primary').classes('grow compact-upload')
                             ui.upload(
                                 label='TIRAR FOTO',
                                 on_upload=stage_proof,
                                 auto_upload=True,
                                 max_file_size=8_000_000,
-                            ).props('accept="image/*" capture="environment" flat color=primary').classes('mt-2 grow')
+                            ).props('accept="image/*" capture="environment" flat color=primary').classes('grow compact-upload')
                 render_uploader()
 
             with ui.element('div').classes('summary-shell w-full mt-5'):
