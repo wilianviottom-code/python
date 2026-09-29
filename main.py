@@ -307,7 +307,7 @@ def upload_cloud_proof(client, user_id, cloud_route_id, proof):
     safe = _safe_storage_name(proof['nome'])
     path = f"{user_id}/{cloud_route_id}/{uuid.uuid4().hex}_{safe}"
     opts = {'content-type': proof.get('mime') or 'application/octet-stream', 'upsert': 'false'}
-    client.storage.from_('documentos').upload(path, proof['dados'], opts)
+    client.storage.from_('comprovantes').upload(path, proof['dados'], opts)
     client.table('documentos').insert({
         'user_id': user_id, 'rota_id': cloud_route_id,
         'arquivo_path': path, 'nome_arquivo': proof['nome'],
@@ -321,7 +321,7 @@ def cloud_proofs(cloud_route_id):
     return client, user_id, (res.data or [])
 
 def cloud_proof_bytes(client, path):
-    return client.storage.from_('documentos').download(path)
+    return client.storage.from_('comprovantes').download(path)
 
 
 def cloud_route_to_local(r):
@@ -486,7 +486,7 @@ def render_rotaos():
         # MARCA - lado esquerdo
             with ui.column().classes('gap-0'):
                 ui.label('RotaOS').classes('text-xl font-bold leading-tight')
-                ui.label('O sistema operacional de quem vive de rota.').classes('text-xs text-white/80')
+                ui.label('o sistema operacional de quem vive de rota.').classes('text-xs text-white/80')
         
         # INFORMAÇÕES - lado direito
         with ui.row().classes('items-center gap-2'):
@@ -658,7 +658,7 @@ def render_rotaos():
             pending_proofs = []
             with ui.card().classes('w-full card p-5 mt-4'):
                 ui.label('📎 DOCUMENTOS DA ROTA').classes('title')
-                ui.label('Fotos, comprovantes, prints').classes('muted text-sm')
+                ui.label('Fotos, comprovantes, prints e PDFs relacionados à rota.').classes('muted text-sm')
                 pending_box = ui.column().classes('w-full gap-2 mt-3')
 
                 def render_pending():
@@ -1196,7 +1196,7 @@ def render_rotaos():
                                             import asyncio
                                             await asyncio.gather(
                                                 asyncio.to_thread(
-                                                    lambda: c.storage.from_('documentos').remove([proof['arquivo_path']])
+                                                    lambda: c.storage.from_('comprovantes').remove([proof['arquivo_path']])
                                                 ),
                                                 asyncio.to_thread(
                                                     lambda: c.table('documentos').delete()
