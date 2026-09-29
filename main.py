@@ -790,21 +790,21 @@ def render_rotaos():
             bod.on('click', lambda: cash('od', 'Outro desconto', disc_box))
 
             def atualizar_valor_fixo(e):
-                # O evento update:model-value traz o valor digitado antes de
-                # fixo_i.value estar necessariamente sincronizado no servidor.
-                # Atualizamos o componente primeiro e só depois recalculamos.
+                # Recalcula somente quando a edição do valor base é concluída.
+                # Evita um evento ao servidor a cada tecla digitada.
                 novo_valor = e.args
                 if isinstance(novo_valor, dict):
-                    novo_valor = novo_valor.get('value', novo_valor.get('modelValue', '0,00'))
+                    novo_valor = novo_valor.get('value', novo_valor.get('modelValue', fixo_i.value))
                 elif isinstance(novo_valor, (list, tuple)):
-                    novo_valor = novo_valor[0] if novo_valor else '0,00'
-                fixo_i.value = novo_valor
+                    novo_valor = novo_valor[0] if novo_valor else fixo_i.value
+                if novo_valor not in (None, ''):
+                    fixo_i.value = novo_valor
                 recalc()
 
-            fixo_i.on('update:model-value', atualizar_valor_fixo)
-            fixo_i.on('change', lambda e: recalc())
+            # Não usar update:model-value: ele dispara a cada tecla.
+            fixo_i.on('change', atualizar_valor_fixo)
             fixo_i.on('blur', lambda e: recalc())
-            obs.on('input', lambda e: recalc())
+            obs.on('change', lambda e: recalc())
 
             def clear_form():
                 empresa_i.value=''; rotaid_i.value=''; ref_i.value=''; destino_i.value=''
