@@ -308,7 +308,7 @@ def upload_cloud_proof(client, user_id, cloud_route_id, proof):
     path = f"{user_id}/{cloud_route_id}/{uuid.uuid4().hex}_{safe}"
     opts = {'content-type': proof.get('mime') or 'application/octet-stream', 'upsert': 'false'}
     client.storage.from_('comprovantes').upload(path, proof['dados'], opts)
-    client.table('documentos').insert({
+    client.table('comprovantes').insert({
         'user_id': user_id, 'rota_id': cloud_route_id,
         'arquivo_path': path, 'nome_arquivo': proof['nome'],
     }).execute()
@@ -316,7 +316,7 @@ def upload_cloud_proof(client, user_id, cloud_route_id, proof):
 
 def cloud_proofs(cloud_route_id):
     client, user_id = _cloud_session()
-    res = (client.table('documentos').select('*').eq('user_id', user_id)
+    res = (client.table('comprovantes').select('*').eq('user_id', user_id)
            .eq('rota_id', cloud_route_id).order('id', desc=True).execute())
     return client, user_id, (res.data or [])
 
@@ -1199,7 +1199,7 @@ def render_rotaos():
                                                     lambda: c.storage.from_('comprovantes').remove([proof['arquivo_path']])
                                                 ),
                                                 asyncio.to_thread(
-                                                    lambda: c.table('documentos').delete()
+                                                    lambda: c.table('comprovantes').delete()
                                                     .eq('id', proof['id']).eq('user_id', uid).execute()
                                                 ),
                                             )
