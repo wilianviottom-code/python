@@ -30,11 +30,11 @@ def con():
     return c
 
 
-@app.get('/comprovantes/{proof_id}/download')
+@app.get('/documentos/{proof_id}/download')
 def download_comprovante(proof_id: int):
     with con() as c:
         proof = c.execute(
-            'SELECT nome, mime, dados FROM comprovantes WHERE id=?',
+            'SELECT nome, mime, dados FROM documentos WHERE id=?',
             (proof_id,),
         ).fetchone()
     if not proof:
@@ -89,7 +89,7 @@ def init():
           inicio TEXT, fim TEXT, empresa TEXT, previsto REAL,
           informado REAL, diferenca REAL, observacao TEXT, criado TEXT
         );
-        CREATE TABLE IF NOT EXISTS comprovantes(
+        CREATE TABLE IF NOT EXISTS documentos(
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           rota_id_db INTEGER NOT NULL, nome TEXT NOT NULL, mime TEXT, dados BLOB NOT NULL, criado TEXT
         );
@@ -307,8 +307,8 @@ def upload_cloud_proof(client, user_id, cloud_route_id, proof):
     safe = _safe_storage_name(proof['nome'])
     path = f"{user_id}/{cloud_route_id}/{uuid.uuid4().hex}_{safe}"
     opts = {'content-type': proof.get('mime') or 'application/octet-stream', 'upsert': 'false'}
-    client.storage.from_('comprovantes').upload(path, proof['dados'], opts)
-    client.table('comprovantes').insert({
+    client.storage.from_('documentos').upload(path, proof['dados'], opts)
+    client.table('documentos').insert({
         'user_id': user_id, 'rota_id': cloud_route_id,
         'arquivo_path': path, 'nome_arquivo': proof['nome'],
     }).execute()
@@ -316,12 +316,12 @@ def upload_cloud_proof(client, user_id, cloud_route_id, proof):
 
 def cloud_proofs(cloud_route_id):
     client, user_id = _cloud_session()
-    res = (client.table('comprovantes').select('*').eq('user_id', user_id)
+    res = (client.table('documentos').select('*').eq('user_id', user_id)
            .eq('rota_id', cloud_route_id).order('id', desc=True).execute())
     return client, user_id, (res.data or [])
 
 def cloud_proof_bytes(client, path):
-    return client.storage.from_('comprovantes').download(path)
+    return client.storage.from_('documentos').download(path)
 
 
 def cloud_route_to_local(r):
@@ -486,7 +486,7 @@ def render_rotaos():
         # MARCA - lado esquerdo
             with ui.column().classes('gap-0'):
                 ui.label('RotaOS').classes('text-xl font-bold leading-tight')
-                ui.label('o sistema operacional de quem vive de rota.').classes('text-xs text-white/80')
+                ui.label('O sistema operacional de quem vive de rota.').classes('text-xs text-white/80')
         
         # INFORMAÇÕES - lado direito
         with ui.row().classes('items-center gap-2'):
@@ -649,20 +649,16 @@ def render_rotaos():
                         bod = ui.button('+ Outro').props('outline no-caps')
                     disc_box = ui.column().classes('w-full gap-2 mt-3')
 
-            with ui.card().classes('w-full card p-5 mt-5'):
-                ui.label('📝 OBSERVAÇÕES DA ROTA').classes('title')
-                ui.label('Registre aqui ocorrências ou informações importantes desta rota. Campo opcional.').classes('muted text-sm mb-2')
-                obs = ui.textarea('Observações', placeholder='Ex.: atraso na coleta, endereço divergente, ocorrência com pacote...').props('outlined autogrow').classes('w-full')
+            # Campo legado mantido apenas para compatibilidade com registros antigos.
+            # Não aparece na interface.
+            obs = ui.input(value='').classes('hidden')
 
-            # Comprovantes escolhidos antes de salvar ficam apenas em memória.
+            # Documentos escolhidos antes de salvar ficam apenas em memória.
             # Só são gravados e vinculados depois que a rota recebe um ID no banco.
             pending_proofs = []
             with ui.card().classes('w-full card p-5 mt-4'):
-                ui.label('📎 COMPROVANTES DA ROTA').classes('title')
-                ui.label(
-                    'Guarde prints, fotos ou documentos relacionados a esta rota. '
-                    'Eles podem ajudar na conferência de pagamentos e na comprovação do serviço realizado.'
-                ).classes('muted text-sm')
+                ui.label('📎 DOCUMENTOS DA ROTA').classes('title')
+                ui.label('Fotos, comprovantes, prints').classes('muted text-sm')
                 pending_box = ui.column().classes('w-full gap-2 mt-3')
 
                 def render_pending():
@@ -703,12 +699,19 @@ def render_rotaos():
                 def render_uploader():
                     upload_slot.clear()
                     with upload_slot:
-                        ui.upload(
-                            label='ANEXAR COMPROVANTE',
-                            on_upload=stage_proof,
-                            auto_upload=True,
-                            max_file_size=8_000_000,
-                        ).props('accept="image/*,.pdf" flat color=primary').classes('mt-2')
+                        with ui.row().classes('w-full gap-2 items-start'):
+                            ui.upload(
+                                label='ANEXAR ARQUIVO',
+                                on_upload=stage_proof,
+                                auto_upload=True,
+                                max_file_size=8_000_000,
+                            ).props('accept="image/*,.pdf" flat color=primary').classes('mt-2 grow')
+                            ui.upload(
+                                label='TIRAR FOTO',
+                                on_upload=stage_proof,
+                                auto_upload=True,
+                                max_file_size=8_000_000,
+                            ).props('accept="image/*" capture="environment" flat color=primary').classes('mt-2 grow')
                 render_uploader()
 
             with ui.element('div').classes('summary-shell w-full mt-5'):
@@ -805,21 +808,25 @@ def render_rotaos():
                 if k in fields:
                     return
                 with box:
-                    row = ui.row().classes('dynamic-row w-full items-center gap-2')
+                    row = ui.column().classes('dynamic-row w-full gap-2')
                     with row:
-                        ui.label(title).classes('w-40 font-bold')
-                        x = ui.input('Valor R$', value='0,00').props(
-                            'outlined dense inputmode=decimal'
-                        ).classes('grow')
-                        ui.button(
-                            icon='close',
-                            on_click=lambda: remove_dynamic([k], row),
-                        ).props('flat round dense color=grey-7').classes('close-chip')
+                        with ui.row().classes('w-full items-center gap-2'):
+                            ui.label(title).classes('w-40 font-bold')
+                            x = ui.input('Valor R$', value='0,00').props(
+                                'outlined dense inputmode=decimal'
+                            ).classes('grow')
+                            keys_to_remove = [k, 'od_desc'] if k == 'od' else [k]
+                            ui.button(
+                                icon='close',
+                                on_click=lambda keys=keys_to_remove, container=row: remove_dynamic(keys, container),
+                            ).props('flat round dense color=grey-7').classes('close-chip')
+                        if k == 'od':
+                            desc = ui.input(
+                                'Descrição da despesa (opcional)',
+                                placeholder='Ex.: ajudante, alimentação...'
+                            ).props('outlined dense').classes('w-full')
+                            fields['od_desc'] = desc
                 fields[k] = x
-                if k == 'od':
-                    with box:
-                        desc = ui.input('Descrição da despesa (opcional)', placeholder='Ex.: ajudante, alimentação...').props('outlined dense').classes('w-full')
-                    fields['od_desc'] = desc
                 x.on('blur', lambda e: recalc())
                 recalc()
 
@@ -902,7 +909,7 @@ def render_rotaos():
                     new_route_id = cur.lastrowid
                     for proof in pending_proofs:
                         c.execute(
-                            'INSERT INTO comprovantes(rota_id_db,nome,mime,dados,criado) VALUES(?,?,?,?,?)',
+                            'INSERT INTO documentos(rota_id_db,nome,mime,dados,criado) VALUES(?,?,?,?,?)',
                             (new_route_id, proof['nome'], proof['mime'], proof['dados'], datetime.now().isoformat())
                         )
                 # Sincroniza a mesma rota com o Supabase, vinculada ao motorista logado.
@@ -1032,9 +1039,10 @@ def render_rotaos():
                             total_lbl.text='Selecionadas: '+money(val)
                         select_all = ui.checkbox('Selecionar todas')
                         def toggle_all(e):
-                            value = bool(select_all.value)
+                            value = bool(e.value)
                             for _, ch in checks:
-                                ch.set_value(value)
+                                ch.value = value
+                                ch.update()
                             total()
                         select_all.on_value_change(toggle_all)
                         for r in rows:
@@ -1140,7 +1148,7 @@ def render_rotaos():
                             client, user_id, proofs = cloud_proofs(r['cloud_id'])
                         except Exception as ex:
                             with proof_box:
-                                ui.label(f'Não foi possível carregar comprovantes: {ex}').classes('text-negative')
+                                ui.label(f'Não foi possível carregar documentos: {ex}').classes('text-negative')
                             return
                         with proof_box:
                             if not proofs:
@@ -1188,10 +1196,10 @@ def render_rotaos():
                                             import asyncio
                                             await asyncio.gather(
                                                 asyncio.to_thread(
-                                                    lambda: c.storage.from_('comprovantes').remove([proof['arquivo_path']])
+                                                    lambda: c.storage.from_('documentos').remove([proof['arquivo_path']])
                                                 ),
                                                 asyncio.to_thread(
-                                                    lambda: c.table('comprovantes').delete()
+                                                    lambda: c.table('documentos').delete()
                                                     .eq('id', proof['id']).eq('user_id', uid).execute()
                                                 ),
                                             )
@@ -1219,7 +1227,9 @@ def render_rotaos():
                             ui.notify(f'Não foi possível anexar: {ex}',type='negative')
 
                     render_proofs()
-                    ui.upload(label='ANEXAR COMPROVANTE',on_upload=upload_proof,auto_upload=True,max_file_size=8_000_000).props('accept="image/*,.pdf" flat color=primary').classes('mt-2')
+                    with ui.row().classes('w-full gap-2 items-start'):
+                        ui.upload(label='ANEXAR ARQUIVO',on_upload=upload_proof,auto_upload=True,max_file_size=8_000_000).props('accept="image/*,.pdf" flat color=primary').classes('mt-2 grow')
+                        ui.upload(label='TIRAR FOTO',on_upload=upload_proof,auto_upload=True,max_file_size=8_000_000).props('accept="image/*" capture="environment" flat color=primary').classes('mt-2 grow')
                     ui.separator()
                     ui.label('PREVISÃO A RECEBER: '+money(r['receber'])).classes('text-xl font-bold')
                     ui.label('RESULTADO LÍQUIDO: '+money(r['resultado'])).classes('text-lg font-bold')
@@ -1228,7 +1238,7 @@ def render_rotaos():
                             clean_obs_edit, discount_desc_edit = split_route_observation(r['observacao'])
                             with ui.dialog() as ed, ui.card().classes('w-[900px] max-w-full p-6 dialog-mobile'):
                                 ui.label('Editar rota').classes('text-2xl font-bold')
-                                ui.label('Altere os dados e salve na mesma rota. Os comprovantes permanecem vinculados.').classes('muted')
+                                ui.label('Altere os dados e salve na mesma rota. Os documentos permanecem vinculados.').classes('muted')
                                 with ui.element('div').classes('twocol w-full'):
                                     e_data=ui.input('Data',value=r['data']).props('type=date outlined')
                                     e_id=ui.input('ID da rota',value=r['rota_id']).props('outlined')
@@ -1247,7 +1257,7 @@ def render_rotaos():
                                     e_est=ui.input('Estacionamento (R$)',value=str(r['estacionamento']).replace('.',',')).props('outlined inputmode=decimal')
                                     e_od=ui.input('Outra despesa (R$)',value=str(r['outro_desconto']).replace('.',',')).props('outlined inputmode=decimal')
                                     e_od_desc=ui.input('Descrição da despesa (opcional)',value=discount_desc_edit).props('outlined')
-                                    e_obs=ui.input('Observações da rota',value=clean_obs_edit).props('outlined')
+                                    e_obs=ui.input(value=clean_obs_edit).classes('hidden')
                                 def save_edit():
                                     try:
                                         pq=num(e_pac.value); sq=num(e_par.value); kq=num(e_km.value)
