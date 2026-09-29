@@ -306,13 +306,21 @@ def add_cloud_range(tipo, mi, ma, valor):
     for r in rows:
         if mi < num(r['maximo']) and num(r['minimo']) < ma:
             raise ValueError('Essa faixa cruza outra já cadastrada.')
-    client.table('faixas').insert({'user_id':user_id,'tipo':tipo,'minimo':mi,'maximo':ma,'valor':valor}).execute()
-    invalidate_ranges_cache(user_id)
+    result = client.table('faixas').insert({'user_id':user_id,'tipo':tipo,'minimo':mi,'maximo':ma,'valor':valor}).execute()
+    if not result.data:
+        raise RuntimeError('Supabase não retornou a faixa salva.')
+    # Atualiza o cache local imediatamente; evita um segundo SELECT só para redesenhar a tela.
+    grouped = _RANGES_CACHE.setdefault(user_id, {'pacotes': [], 'paradas': [], 'km': []})
+    grouped.setdefault(tipo, []).append(result.data[0])
+    grouped[tipo].sort(key=lambda r: num(r.get('minimo')))
 
 def delete_cloud_range(range_id):
     client, user_id = _cloud_session()
     client.table('faixas').delete().eq('id', range_id).eq('user_id', user_id).execute()
-    invalidate_ranges_cache(user_id)
+    grouped = _RANGES_CACHE.get(user_id)
+    if grouped:
+        for tipo in ('pacotes', 'paradas', 'km'):
+            grouped[tipo] = [r for r in grouped.get(tipo, []) if r.get('id') != range_id]
 
 def _safe_storage_name(name):
     base = os.path.basename(name or 'comprovante')
@@ -468,6 +476,8 @@ def render_rotaos():
     <style>
     body{background:#f5f6f8}.wrap{max-width:1420px;margin:auto}.card{border-radius:16px}
     .blue{border:1.5px solid #1976d2}.muted{color:#667085}.title{font-size:19px;font-weight:800}
+    .q-header{min-height:48px!important;padding-top:4px!important;padding-bottom:4px!important}.q-header>.q-row{min-height:40px!important}.brand-stack{line-height:1.05!important}
+    .brand-stack{gap:0!important;line-height:1.05}
     .twocol{display:grid;grid-template-columns:1fr 1fr;gap:22px}
     .threecol{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
     .summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
@@ -508,7 +518,7 @@ def render_rotaos():
     .compact-upload .q-uploader__list{display:none!important;min-height:0!important;height:0!important;padding:0!important}
     .compact-upload .q-uploader__dnd{display:none!important}
     .compact-upload .q-uploader__header .q-btn{width:30px!important;height:30px!important;min-height:30px!important}
-    @media(max-width:900px){.route-financial-summary{grid-template-columns:1fr}.route-detail-card{padding:16px!important}.wrap{width:100%;padding:0 8px}.twocol,.threecol{grid-template-columns:1fr}.summary{grid-template-columns:1fr 1fr 1fr}.section{min-height:auto}.q-header{padding-left:12px!important;padding-right:12px!important}.q-tab{padding:0 10px}.q-tab__label{font-size:12px}.mobile-stack{flex-direction:column!important;align-items:stretch!important}.mobile-stack>*{width:100%!important;max-width:none!important}.metric{padding:10px;font-size:12px}.receive-value{font-size:28px}.summary-shell{padding:13px}.history-card-row{flex-direction:column!important;align-items:flex-start!important;gap:8px!important}.history-money{width:auto!important}.dialog-mobile{width:96vw!important;max-width:820px!important;max-height:92vh!important;overflow:auto!important}}
+    @media(max-width:900px){.route-financial-summary{grid-template-columns:1fr}.route-detail-card{padding:16px!important}.wrap{width:100%;padding:0 8px}.twocol,.threecol{grid-template-columns:1fr}.summary{grid-template-columns:1fr 1fr 1fr}.section{min-height:auto}.q-header{min-height:48px!important;padding:4px 10px!important}.q-tab{padding:0 10px}.q-tab__label{font-size:12px}.mobile-stack{flex-direction:column!important;align-items:stretch!important}.mobile-stack>*{width:100%!important;max-width:none!important}.metric{padding:10px;font-size:12px}.receive-value{font-size:28px}.summary-shell{padding:13px}.history-card-row{flex-direction:column!important;align-items:flex-start!important;gap:8px!important}.history-money{width:auto!important}.dialog-mobile{width:96vw!important;max-width:820px!important;max-height:92vh!important;overflow:auto!important}}
     </style>
     """)
     ui.add_head_html("""
@@ -524,120 +534,119 @@ def render_rotaos():
     </script>
     """)
 
-    with ui.header().classes('px-8'):
-        with ui.row().classes('w-full items-center justify-between'):
-        # MARCA - lado esquerdo
-            with ui.column().classes('gap-0'):
+    with ui.header().classes('px-4 py-1'):
+        with ui.row().classes('w-full items-center justify-between no-wrap'):
+            # MARCA - lado esquerdo
+            with ui.column().classes('gap-0 brand-stack'):
                 ui.label('RotaOS').classes('text-xl font-bold leading-tight')
-                ui.label('o sistema operacional de quem vive de rota.').classes('text-xs text-white/80')
-        
-        # INFORMAÇÕES - lado direito
-        with ui.row().classes('items-center gap-2'):
-            ui.label('Produção | Recebimentos | Conferência').classes('text-sm')
+                ui.label('o sistema operacional de quem vive de rota.').classes('text-xs text-white/80 leading-tight')
 
-            def _logout():
-                try:
-                    client = _new_supabase_client()
-                    access = app.storage.user.get('access_token')
-                    refresh = app.storage.user.get('refresh_token')
-                    if access and refresh:
-                        client.auth.set_session(access, refresh)
-                        client.auth.sign_out()
-                except Exception:
-                    pass
-                app.storage.user.clear()
-                ui.navigate.to('/')
+            # MENU - mesma linha da marca, no canto superior direito
+            with ui.row().classes('items-center gap-0 ml-auto'):
 
-            def _profile_dialog():
-                client, uid = _cloud_session()
-                try:
-                    u = client.auth.get_user().user
-                    meta = u.user_metadata or {}
-                except Exception:
-                    meta = {}
-                with ui.dialog() as dlg, ui.card().classes('dialog-mobile w-[520px] p-5'):
-                    ui.label('Perfil').classes('text-xl font-bold')
-                    avatar_box = ui.column().classes('w-full items-center')
-                    def render_avatar():
-                        avatar_box.clear()
-                        path = (meta or {}).get('avatar_path')
-                        with avatar_box:
-                            if path:
-                                try:
-                                    signed = client.storage.from_('avatars').create_signed_url(path, 3600)
-                                    url = signed.get('signedURL') or signed.get('signedUrl') or signed.get('signed_url')
-                                    if url:
-                                        ui.image(url).classes('w-24 h-24 rounded-full object-cover')
-                                    else:
+                def _logout():
+                    try:
+                        client = _new_supabase_client()
+                        access = app.storage.user.get('access_token')
+                        refresh = app.storage.user.get('refresh_token')
+                        if access and refresh:
+                            client.auth.set_session(access, refresh)
+                            client.auth.sign_out()
+                    except Exception:
+                        pass
+                    app.storage.user.clear()
+                    ui.navigate.to('/')
+
+                def _profile_dialog():
+                    client, uid = _cloud_session()
+                    try:
+                        u = client.auth.get_user().user
+                        meta = u.user_metadata or {}
+                    except Exception:
+                        meta = {}
+                    with ui.dialog() as dlg, ui.card().classes('dialog-mobile w-[520px] p-5'):
+                        ui.label('Perfil').classes('text-xl font-bold')
+                        avatar_box = ui.column().classes('w-full items-center')
+                        def render_avatar():
+                            avatar_box.clear()
+                            path = (meta or {}).get('avatar_path')
+                            with avatar_box:
+                                if path:
+                                    try:
+                                        signed = client.storage.from_('avatars').create_signed_url(path, 3600)
+                                        url = signed.get('signedURL') or signed.get('signedUrl') or signed.get('signed_url')
+                                        if url:
+                                            ui.image(url).classes('w-24 h-24 rounded-full object-cover')
+                                        else:
+                                            ui.icon('account_circle').classes('text-7xl text-grey-6')
+                                    except Exception:
                                         ui.icon('account_circle').classes('text-7xl text-grey-6')
-                                except Exception:
+                                else:
                                     ui.icon('account_circle').classes('text-7xl text-grey-6')
-                            else:
-                                ui.icon('account_circle').classes('text-7xl text-grey-6')
-                    render_avatar()
-                    nome = ui.input('Nome', value=(meta or {}).get('nome','')).props('outlined').classes('w-full')
-                    ui.input('E-mail', value=app.storage.user.get('email','')).props('outlined readonly').classes('w-full')
-                    async def avatar_upload(e):
-                        try:
-                            raw = await e.file.read()
-                            if len(raw) > 5_000_000:
-                                ui.notify('Foto maior que 5 MB.', type='warning'); return
-                            mime = e.file.content_type or ''
-                            if not mime.startswith('image/'):
-                                ui.notify('Envie uma imagem.', type='warning'); return
-                            ext = Path(e.file.name or 'avatar.jpg').suffix.lower() or '.jpg'
-                            path = f'{uid}/avatar{ext}'
+                        render_avatar()
+                        nome = ui.input('Nome', value=(meta or {}).get('nome','')).props('outlined').classes('w-full')
+                        ui.input('E-mail', value=app.storage.user.get('email','')).props('outlined readonly').classes('w-full')
+                        async def avatar_upload(e):
                             try:
-                                client.storage.from_('avatars').remove([path])
-                            except Exception:
-                                pass
-                            client.storage.from_('avatars').upload(path, raw, {'content-type': mime, 'upsert':'true'})
-                            meta['avatar_path'] = path
-                            client.auth.update_user({'data': {'nome': nome.value.strip(), 'avatar_path': path}})
-                            render_avatar(); ui.notify('Foto atualizada.', type='positive')
-                        except Exception as ex:
-                            ui.notify(f'Não foi possível atualizar a foto: {ex}', type='negative')
-                    ui.upload(label='ALTERAR FOTO', on_upload=avatar_upload, auto_upload=True, max_file_size=5_000_000).props('accept="image/*" flat color=primary').classes('w-full')
-                    def save_profile():
-                        try:
-                            client.auth.update_user({'data': {'nome': nome.value.strip(), 'avatar_path': meta.get('avatar_path')}})
-                            ui.notify('Perfil atualizado.', type='positive')
-                        except Exception as ex:
-                            ui.notify(f'Não foi possível atualizar o perfil: {ex}', type='negative')
-                    with ui.row().classes('w-full justify-end'):
-                        ui.button('Salvar', on_click=save_profile).props('no-caps')
-                        ui.button('Fechar', on_click=dlg.close).props('flat no-caps')
-                dlg.open()
+                                raw = await e.file.read()
+                                if len(raw) > 5_000_000:
+                                    ui.notify('Foto maior que 5 MB.', type='warning'); return
+                                mime = e.file.content_type or ''
+                                if not mime.startswith('image/'):
+                                    ui.notify('Envie uma imagem.', type='warning'); return
+                                ext = Path(e.file.name or 'avatar.jpg').suffix.lower() or '.jpg'
+                                path = f'{uid}/avatar{ext}'
+                                try:
+                                    client.storage.from_('avatars').remove([path])
+                                except Exception:
+                                    pass
+                                client.storage.from_('avatars').upload(path, raw, {'content-type': mime, 'upsert':'true'})
+                                meta['avatar_path'] = path
+                                client.auth.update_user({'data': {'nome': nome.value.strip(), 'avatar_path': path}})
+                                render_avatar(); ui.notify('Foto atualizada.', type='positive')
+                            except Exception as ex:
+                                ui.notify(f'Não foi possível atualizar a foto: {ex}', type='negative')
+                        ui.upload(label='ALTERAR FOTO', on_upload=avatar_upload, auto_upload=True, max_file_size=5_000_000).props('accept="image/*" flat color=primary').classes('w-full')
+                        def save_profile():
+                            try:
+                                client.auth.update_user({'data': {'nome': nome.value.strip(), 'avatar_path': meta.get('avatar_path')}})
+                                ui.notify('Perfil atualizado.', type='positive')
+                            except Exception as ex:
+                                ui.notify(f'Não foi possível atualizar o perfil: {ex}', type='negative')
+                        with ui.row().classes('w-full justify-end'):
+                            ui.button('Salvar', on_click=save_profile).props('no-caps')
+                            ui.button('Fechar', on_click=dlg.close).props('flat no-caps')
+                    dlg.open()
 
-            def _settings_dialog():
-                with ui.dialog() as dlg, ui.card().classes('dialog-mobile w-[520px] p-5'):
-                    ui.label('Configurações').classes('text-xl font-bold')
-                    ui.label('Alterar senha').classes('font-bold mt-2')
-                    p1 = ui.input('Nova senha').props('outlined type=password autocomplete=new-password').classes('w-full')
-                    p2 = ui.input('Confirmar nova senha').props('outlined type=password autocomplete=new-password').classes('w-full')
-                    def change_password():
-                        if len(p1.value or '') < 6:
-                            ui.notify('Use uma senha com pelo menos 6 caracteres.', type='warning'); return
-                        if p1.value != p2.value:
-                            ui.notify('As senhas não conferem.', type='warning'); return
-                        try:
-                            client, _ = _cloud_session()
-                            client.auth.update_user({'password': p1.value})
-                            p1.value=''; p2.value=''
-                            ui.notify('Senha alterada com sucesso.', type='positive')
-                        except Exception as ex:
-                            ui.notify(f'Não foi possível alterar a senha: {ex}', type='negative')
-                    with ui.row().classes('w-full justify-end'):
-                        ui.button('Alterar senha', on_click=change_password).props('no-caps')
-                        ui.button('Fechar', on_click=dlg.close).props('flat no-caps')
-                dlg.open()
+                def _settings_dialog():
+                    with ui.dialog() as dlg, ui.card().classes('dialog-mobile w-[520px] p-5'):
+                        ui.label('Configurações').classes('text-xl font-bold')
+                        ui.label('Alterar senha').classes('font-bold mt-2')
+                        p1 = ui.input('Nova senha').props('outlined type=password autocomplete=new-password').classes('w-full')
+                        p2 = ui.input('Confirmar nova senha').props('outlined type=password autocomplete=new-password').classes('w-full')
+                        def change_password():
+                            if len(p1.value or '') < 6:
+                                ui.notify('Use uma senha com pelo menos 6 caracteres.', type='warning'); return
+                            if p1.value != p2.value:
+                                ui.notify('As senhas não conferem.', type='warning'); return
+                            try:
+                                client, _ = _cloud_session()
+                                client.auth.update_user({'password': p1.value})
+                                p1.value=''; p2.value=''
+                                ui.notify('Senha alterada com sucesso.', type='positive')
+                            except Exception as ex:
+                                ui.notify(f'Não foi possível alterar a senha: {ex}', type='negative')
+                        with ui.row().classes('w-full justify-end'):
+                            ui.button('Alterar senha', on_click=change_password).props('no-caps')
+                            ui.button('Fechar', on_click=dlg.close).props('flat no-caps')
+                    dlg.open()
 
-            with ui.button(icon='menu').props('round flat color=white'):
-                with ui.menu():
-                    ui.menu_item('Perfil', on_click=_profile_dialog)
-                    ui.menu_item('Configurações', on_click=_settings_dialog)
-                    ui.separator()
-                    ui.menu_item('Sair', on_click=_logout)
+                with ui.button(icon='menu').props('round flat color=white'):
+                    with ui.menu():
+                        ui.menu_item('Perfil', on_click=_profile_dialog)
+                        ui.menu_item('Configurações', on_click=_settings_dialog)
+                        ui.separator()
+                        ui.menu_item('Sair', on_click=_logout)
 
     with ui.tabs().classes('w-full') as tabs:
         reg = ui.tab('Registrar', icon='add_circle')
@@ -933,7 +942,8 @@ def render_rotaos():
                 pending_proofs.clear(); render_pending(); render_uploader()
                 prod_box.clear(); reimb_box.clear(); disc_box.clear(); recalc()
 
-            def save_route():
+            async def save_route():
+                import asyncio
                 recalc()
                 if not state['rota_id']:
                     ui.notify('Informe o ID da rota.', type='warning'); return
@@ -1000,7 +1010,7 @@ def render_rotaos():
                         'outro_reembolso': state['outro_reembolso'],
                         'created_at': datetime.now().isoformat(),
                     }
-                    inserted = cloud.table('rotas').insert(payload).execute()
+                    inserted = await asyncio.to_thread(lambda: cloud.table('rotas').insert(payload).execute())
                     if not inserted.data:
                         raise RuntimeError('Supabase não retornou a rota salva.')
                     cloud_route_id = inserted.data[0]['id']
@@ -1009,14 +1019,20 @@ def render_rotaos():
                     return
 
                 proof_errors = []
-                for proof in pending_proofs:
-                    try:
-                        upload_cloud_proof(cloud, user_id, cloud_route_id, proof)
-                    except Exception as ex:
-                        proof_errors.append(f"{proof['nome']}: {ex}")
+                if pending_proofs:
+                    async def _send_proof(proof):
+                        try:
+                            await asyncio.to_thread(upload_cloud_proof, cloud, user_id, cloud_route_id, proof)
+                            return None
+                        except Exception as ex:
+                            return f"{proof['nome']}: {ex}"
+                    proof_results = await asyncio.gather(*[_send_proof(p) for p in list(pending_proofs)])
+                    proof_errors = [err for err in proof_results if err]
 
                 saved_total = state['receber']
-                refresh_history(); refresh_close(); clear_form()
+                # Não faz dois SELECTs no Supabase logo após salvar. Histórico e Fechamento
+                # são atualizados ao abrir a respectiva aba. Isso reduz bastante a espera percebida.
+                clear_form()
                 if proof_errors:
                     ui.notify('Rota salva no Supabase, mas houve falha em comprovante(s): ' + ' | '.join(proof_errors), type='warning', timeout=12000)
                 else:
@@ -1028,7 +1044,7 @@ def render_rotaos():
         # ---------- FECHAMENTO ----------
         with ui.tab_panel(close):
             ui.label('Fechamento e conferência').classes('text-2xl font-bold')
-            ui.label('Some as rotas de um período e compare com o espelho da empresa.').classes('muted mb-4')
+            ui.label('Selecione as rotas do período para conferir recebimentos e despesas.').classes('muted mb-4')
 
             today = date.today()
             start_default = (today - timedelta(days=14)).isoformat()
@@ -1074,12 +1090,34 @@ def render_rotaos():
                     if not rows:
                         ui.label('Nenhuma rota nesse período.').classes('muted'); return
                     with ui.card().classes('w-full card p-5'):
-                        ui.label(f'{len(rows)} rota(s) encontradas').classes('title')
-                        total_lbl=ui.label('Selecionadas: R$ 0,00').classes('text-xl font-bold')
+                        count_lbl = ui.label(f'{len(rows)} rota(s) encontradas').classes('title')
                         checks=[]
+
+                        # Resumo simples para o motorista: quanto a transportadora deve pagar,
+                        # quanto saiu do bolso e quanto sobra depois das despesas.
+                        with ui.element('div').classes('route-financial-summary'):
+                            with ui.element('div').classes('route-financial-item'):
+                                ui.label('A RECEBER DA TRANSPORTADORA').classes('route-financial-name')
+                                receive_lbl = ui.label(money(0)).classes('route-financial-value')
+                            with ui.element('div').classes('route-financial-item'):
+                                ui.label('DESPESAS DAS ROTAS').classes('route-financial-name')
+                                expense_lbl = ui.label(money(0)).classes('route-financial-value')
+                            with ui.element('div').classes('route-financial-item'):
+                                ui.label('RESULTADO').classes('route-financial-name')
+                                result_lbl = ui.label(money(0)).classes('route-financial-value')
+
+                        selected_count_lbl = ui.label('0 rota(s) selecionadas').classes('muted text-sm')
+
                         def total():
-                            val=sum(num(r['receber']) for r,ch in checks if ch.value)
-                            total_lbl.text='Selecionadas: '+money(val)
+                            chosen=[r for r,ch in checks if ch.value]
+                            receber=sum(num(r['receber']) for r in chosen)
+                            despesas=sum(num(r['descontos']) for r in chosen)
+                            resultado=receber-despesas
+                            selected_count_lbl.text=f'{len(chosen)} rota(s) selecionadas'
+                            receive_lbl.text=money(receber)
+                            expense_lbl.text=money(despesas)
+                            result_lbl.text=money(resultado)
+
                         select_all = ui.checkbox('Selecionar todas')
                         def toggle_all(e):
                             value = bool(e.value)
@@ -1096,20 +1134,7 @@ def render_rotaos():
                                 ui.label(r['destino'] or '—').classes('grow')
                                 ui.label(money(r['receber'])).classes('font-bold')
                             checks.append((r,ch)); ch.on('update:model-value',lambda e:total())
-                        ui.separator()
-                        with ui.row().classes('w-full items-end gap-4'):
-                            informado=ui.input('Valor informado no espelho (R$)').props('outlined').classes('w-64')
-                            def reconcile():
-                                chosen=[r for r,ch in checks if ch.value]
-                                if not chosen: ui.notify('Selecione ao menos uma rota.',type='warning'); return
-                                previsto=sum(num(r['receber']) for r in chosen)
-                                inf=num(informado.value); dif=inf-previsto
-                                with con() as c:
-                                    c.execute('INSERT INTO fechamentos(inicio,fim,empresa,previsto,informado,diferenca,observacao,criado) VALUES(?,?,?,?,?,?,?,?)',
-                                              (ini.value,fim.value,'',previsto,inf,dif,'',datetime.now().isoformat()))
-                                typ='positive' if abs(dif)<0.01 else 'warning'
-                                ui.notify(f'Previsto {money(previsto)} | Espelho {money(inf)} | Diferença {money(dif)}',type=typ)
-                            ui.button('CONFERIR ESPELHO',icon='fact_check',on_click=reconcile).props('no-caps')
+                        total()
             refresh_close()
 
         # ---------- HISTÓRICO ----------
@@ -1350,18 +1375,27 @@ def render_rotaos():
                                     ui.button('SALVAR ALTERAÇÕES',icon='save',on_click=save_edit).props('no-caps color=primary')
                             ed.open()
                         ui.button('Editar rota',icon='edit',on_click=edit_route).props('flat color=primary no-caps')
-                        def dele():
-                            try:
-                                user_id = app.storage.user.get('user_id')
-                                access = app.storage.user.get('access_token'); refresh = app.storage.user.get('refresh_token')
-                                cloud = _new_supabase_client(); cloud.auth.set_session(access, refresh)
-                                cloud.table('rotas').delete().eq('id', r['cloud_id']).eq('user_id', user_id).execute()
-                                if r.get('id'):
-                                    with con() as c: c.execute('DELETE FROM rotas WHERE id=?',(r['id'],))
-                                d.close(); refresh_history(); ui.notify('Rota excluída.', type='positive')
-                            except Exception as ex:
-                                ui.notify(f'Não foi possível excluir: {ex}', type='negative')
-                        ui.button('Excluir',on_click=dele).props('flat color=negative no-caps')
+                        def ask_delete_route():
+                            with ui.dialog() as confirm, ui.card().classes('dialog-mobile p-5'):
+                                ui.label('Excluir esta rota?').classes('text-lg font-bold')
+                                ui.label('Esta ação excluirá permanentemente o registro e seus dados associados.').classes('muted text-sm')
+                                with ui.row().classes('w-full justify-end gap-2 mt-3'):
+                                    ui.button('CANCELAR', on_click=confirm.close).props('flat no-caps')
+                                    def dele():
+                                        try:
+                                            user_id = app.storage.user.get('user_id')
+                                            access = app.storage.user.get('access_token'); refresh = app.storage.user.get('refresh_token')
+                                            cloud = _new_supabase_client(); cloud.auth.set_session(access, refresh)
+                                            cloud.table('rotas').delete().eq('id', r['cloud_id']).eq('user_id', user_id).execute()
+                                            if r.get('id'):
+                                                with con() as c: c.execute('DELETE FROM rotas WHERE id=?',(r['id'],))
+                                            confirm.close(); d.close(); refresh_history(); refresh_close()
+                                            ui.notify('Rota excluída.', type='positive')
+                                        except Exception as ex:
+                                            ui.notify(f'Não foi possível excluir: {ex}', type='negative')
+                                    ui.button('EXCLUIR', icon='delete', on_click=dele).props('no-caps color=negative')
+                            confirm.open()
+                        ui.button('Excluir rota',icon='delete',on_click=ask_delete_route).props('flat color=negative no-caps')
                 d.open()
 
             def resolve_period():
@@ -1609,7 +1643,6 @@ def render_rotaos():
                                     ui.notify('Faixa salva.',type='positive')
                                 except Exception as e: ui.notify(str(e),type='negative')
                             ui.button('Adicionar',on_click=add).props('no-caps')
-
 
 @ui.page('/')
 def index():
