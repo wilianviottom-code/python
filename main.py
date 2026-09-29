@@ -465,7 +465,31 @@ def render_rotaos():
     .dynamic-row{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:9px}
 
     .history-row:hover{background:#f0f6ff}.section{min-height:240px}.mobile-actions{display:flex;gap:8px;flex-wrap:wrap}
-    @media(max-width:900px){.wrap{width:100%;padding:0 8px}.twocol,.threecol{grid-template-columns:1fr}.summary{grid-template-columns:1fr 1fr 1fr}.section{min-height:auto}.q-header{padding-left:12px!important;padding-right:12px!important}.q-tab{padding:0 10px}.q-tab__label{font-size:12px}.mobile-stack{flex-direction:column!important;align-items:stretch!important}.mobile-stack>*{width:100%!important;max-width:none!important}.metric{padding:10px;font-size:12px}.receive-value{font-size:28px}.summary-shell{padding:13px}.history-card-row{flex-direction:column!important;align-items:flex-start!important;gap:8px!important}.history-money{width:auto!important}.dialog-mobile{width:96vw!important;max-width:820px!important;max-height:92vh!important;overflow:auto!important}}
+    .route-detail-card{border-radius:18px!important;padding:22px!important;gap:0!important}
+    .route-detail-title{font-size:22px;font-weight:600;line-height:1.25;color:#0f172a}
+    .route-detail-meta{font-size:13px;font-weight:400;color:#64748b}
+    .route-detail-section-title{font-size:15px;font-weight:600;color:#0f172a}
+    .route-detail-label{font-size:13px;font-weight:500;color:#475569}
+    .route-detail-total{font-size:14px;font-weight:600;color:#0f172a;margin-top:4px}
+    .route-financial-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;width:100%;margin:14px 0}
+    .route-financial-item{background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:12px}
+    .route-financial-name{font-size:12px;font-weight:500;color:#64748b}
+    .route-financial-value{font-size:20px;font-weight:600;color:#0f172a;margin-top:2px}
+    .route-docs{border-top:1px solid #e2e8f0;padding-top:14px;margin-top:4px}
+    .route-doc-row{border:1px solid #e2e8f0!important;border-radius:10px!important;padding:7px 10px!important;gap:8px!important}
+    .route-doc-actions{margin-top:6px!important;gap:8px!important;align-items:center!important}
+    .route-detail-actions{border-top:1px solid #e2e8f0;padding-top:10px;margin-top:14px}
+    .route-detail-close{position:absolute!important;top:10px;right:10px;z-index:5;color:#64748b!important}
+    .route-detail-close:hover{background:#f1f5f9!important}
+    .compact-upload{min-height:38px!important;height:38px!important;border-radius:9px!important;overflow:hidden!important}
+    .compact-upload .q-uploader__header{min-height:38px!important;height:38px!important;padding:0 8px!important;box-shadow:none!important}
+    .compact-upload .q-uploader__header-content{min-height:38px!important;padding:0!important}
+    .compact-upload .q-uploader__title{font-size:13px!important;font-weight:500!important;line-height:38px!important}
+    .compact-upload .q-uploader__subtitle{display:none!important}
+    .compact-upload .q-uploader__list{display:none!important;min-height:0!important;height:0!important;padding:0!important}
+    .compact-upload .q-uploader__dnd{display:none!important}
+    .compact-upload .q-uploader__header .q-btn{width:30px!important;height:30px!important;min-height:30px!important}
+    @media(max-width:900px){.route-financial-summary{grid-template-columns:1fr}.route-detail-card{padding:16px!important}.wrap{width:100%;padding:0 8px}.twocol,.threecol{grid-template-columns:1fr}.summary{grid-template-columns:1fr 1fr 1fr}.section{min-height:auto}.q-header{padding-left:12px!important;padding-right:12px!important}.q-tab{padding:0 10px}.q-tab__label{font-size:12px}.mobile-stack{flex-direction:column!important;align-items:stretch!important}.mobile-stack>*{width:100%!important;max-width:none!important}.metric{padding:10px;font-size:12px}.receive-value{font-size:28px}.summary-shell{padding:13px}.history-card-row{flex-direction:column!important;align-items:flex-start!important;gap:8px!important}.history-money{width:auto!important}.dialog-mobile{width:96vw!important;max-width:820px!important;max-height:92vh!important;overflow:auto!important}}
     </style>
     """)
     ui.add_head_html("""
@@ -1085,16 +1109,19 @@ def render_rotaos():
             hb=ui.column().classes('w-full mt-4')
 
             def details(r):
-                with ui.dialog() as d, ui.card().classes('w-[820px] max-w-full p-6 dialog-mobile'):
-                    ui.label(f"Rota {r['rota_id']}").classes('text-2xl font-bold')
-                    ui.label(f"{r['data']} • {r['destino'] or 'Sem destino'}").classes('muted')
-                    if r['referencia']: ui.label('Rota: '+r['referencia'])
-                    clean_obs, discount_desc = split_route_observation(r['observacao'])
-                    if clean_obs: ui.label('📝 '+clean_obs).classes('muted')
-                    ui.separator()
+                with ui.dialog() as d, ui.card().classes('relative w-[820px] max-w-full dialog-mobile route-detail-card'):
+                    ui.button(icon='close', on_click=d.close).props('flat round dense').classes('route-detail-close')
+                    ui.label(f"Rota {r['rota_id']}").classes('route-detail-title pr-10')
+                    meta_parts = [r['data']]
+                    if r['destino']:
+                        meta_parts.append(r['destino'])
+                    if r['referencia']:
+                        meta_parts.append(r['referencia'])
+                    ui.label(' • '.join(meta_parts)).classes('route-detail-meta mt-1')
+                    _, discount_desc = split_route_observation(r['observacao'])
                     with ui.element('div').classes('threecol w-full'):
                         with ui.column():
-                            ui.label('REMUNERAÇÃO').classes('font-bold')
+                            ui.label('Remuneração').classes('route-detail-section-title')
                             if num(r['fixo']) != 0:
                                 ui.label('Valor base: '+money(r['fixo']))
                             if num(r['pacotes']) != 0:
@@ -1107,9 +1134,9 @@ def render_rotaos():
                                 ui.label('Bônus: '+money(r['bonus']))
                             if num(r['outro_extra']) != 0:
                                 ui.label('Outro adicional: '+money(r['outro_extra']))
-                            ui.label('Total: '+money(r['remuneracao'])).classes('font-bold')
+                            ui.label('Total: '+money(r['remuneracao'])).classes('route-detail-total')
                         with ui.column():
-                            ui.label('REEMBOLSOS').classes('font-bold')
+                            ui.label('Reembolsos').classes('route-detail-section-title')
                             has_reembolso = False
                             if num(r['pedagio']) != 0:
                                 ui.label('Pedágio: '+money(r['pedagio'])); has_reembolso = True
@@ -1118,11 +1145,11 @@ def render_rotaos():
                             if r['combustivel_tratamento'] == 'Reembolsável' and num(r['combustivel']) != 0:
                                 ui.label('Combustível: '+money(r['combustivel'])); has_reembolso = True
                             if has_reembolso:
-                                ui.label('Total: '+money(r['reembolsos'])).classes('font-bold')
+                                ui.label('Total: '+money(r['reembolsos'])).classes('route-detail-total')
                             else:
                                 ui.label('Nenhum reembolso informado.').classes('muted text-sm')
                         with ui.column():
-                            ui.label('DESCONTOS / CUSTOS').classes('font-bold')
+                            ui.label('Despesas da rota').classes('route-detail-section-title')
                             has_custo = False
                             if num(r['combustivel']) != 0:
                                 tratamento = r['combustivel_tratamento'] or 'Transportadora'
@@ -1134,12 +1161,11 @@ def render_rotaos():
                             if num(r['outro_desconto']) != 0:
                                 ui.label(('Outra despesa' + (f' • {discount_desc}' if discount_desc else '')) + ': '+money(r['outro_desconto'])); has_custo = True
                             if has_custo and num(r['descontos']) != 0:
-                                ui.label('Total de despesas da rota: '+money(r['descontos'])).classes('font-bold')
+                                ui.label('Total: '+money(r['descontos'])).classes('route-detail-total')
                             elif not has_custo:
                                 ui.label('Nenhuma despesa da rota informada.').classes('muted text-sm')
-                    ui.separator()
-                    ui.label('📎 COMPROVANTES DA ROTA').classes('font-bold text-lg')
-                    ui.label('Guarde prints, fotos ou documentos relacionados a esta rota. Eles podem ajudar na conferência de pagamentos e na comprovação do serviço realizado.').classes('muted text-sm')
+                    with ui.column().classes('w-full route-docs'):
+                        ui.label('Documentos da rota').classes('route-detail-section-title')
                     proof_box = ui.column().classes('w-full gap-2 mt-2')
 
                     def render_proofs():
@@ -1152,11 +1178,11 @@ def render_rotaos():
                             return
                         with proof_box:
                             if not proofs:
-                                ui.label('Nenhum comprovante anexado.').classes('muted')
+                                ui.label('Nenhum documento anexado.').classes('route-detail-meta')
                             for p in proofs:
                                 name = p.get('nome_arquivo') or 'comprovante'
                                 mime = mimetypes.guess_type(name)[0] or 'application/octet-stream'
-                                with ui.row().classes('w-full items-center border rounded-lg p-2 gap-3') as proof_row:
+                                with ui.row().classes('w-full items-center route-doc-row') as proof_row:
                                     ui.icon('image' if mime.startswith('image/') else 'description')
                                     ui.label(name).classes('grow')
                                     def view_proof(proof=p, pmime=mime, pname=name):
@@ -1227,13 +1253,20 @@ def render_rotaos():
                             ui.notify(f'Não foi possível anexar: {ex}',type='negative')
 
                     render_proofs()
-                    with ui.row().classes('w-full gap-2 items-start'):
-                        ui.upload(label='ANEXAR ARQUIVO',on_upload=upload_proof,auto_upload=True,max_file_size=8_000_000).props('accept="image/*,.pdf" flat color=primary').classes('mt-2 grow')
-                        ui.upload(label='TIRAR FOTO',on_upload=upload_proof,auto_upload=True,max_file_size=8_000_000).props('accept="image/*" capture="environment" flat color=primary').classes('mt-2 grow')
-                    ui.separator()
-                    ui.label('PREVISÃO A RECEBER: '+money(r['receber'])).classes('text-xl font-bold')
-                    ui.label('RESULTADO LÍQUIDO: '+money(r['resultado'])).classes('text-lg font-bold')
-                    with ui.row().classes('w-full justify-end'):
+                    with ui.row().classes('w-full items-start route-doc-actions'):
+                        ui.upload(label='ANEXAR ARQUIVO',on_upload=upload_proof,auto_upload=True,max_file_size=8_000_000).props('accept="image/*,.pdf" flat color=primary').classes('grow compact-upload')
+                        ui.upload(label='TIRAR FOTO',on_upload=upload_proof,auto_upload=True,max_file_size=8_000_000).props('accept="image/*" capture="environment" flat color=primary').classes('grow compact-upload')
+                    with ui.element('div').classes('route-financial-summary'):
+                        with ui.element('div').classes('route-financial-item'):
+                            ui.label('Valor da rota').classes('route-financial-name')
+                            ui.label(money(r['receber'])).classes('route-financial-value')
+                        with ui.element('div').classes('route-financial-item'):
+                            ui.label('Despesas').classes('route-financial-name')
+                            ui.label(money(r['descontos'])).classes('route-financial-value')
+                        with ui.element('div').classes('route-financial-item'):
+                            ui.label('Resultado líquido').classes('route-financial-name')
+                            ui.label(money(r['resultado'])).classes('route-financial-value')
+                    with ui.row().classes('w-full justify-end route-detail-actions'):
                         def edit_route():
                             clean_obs_edit, discount_desc_edit = split_route_observation(r['observacao'])
                             with ui.dialog() as ed, ui.card().classes('w-[900px] max-w-full p-6 dialog-mobile'):
@@ -1305,7 +1338,6 @@ def render_rotaos():
                             except Exception as ex:
                                 ui.notify(f'Não foi possível excluir: {ex}', type='negative')
                         ui.button('Excluir',on_click=dele).props('flat color=negative no-caps')
-                        ui.button('Fechar',on_click=d.close).props('no-caps')
                 d.open()
 
             def resolve_period():
