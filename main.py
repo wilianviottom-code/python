@@ -219,20 +219,40 @@ def _cloud_session():
     client.auth.set_session(access, refresh)
     return client, user_id
 
+# Cache das faixas por usuário. Evita consultar o Supabase a cada recálculo da tela.
+# A primeira leitura busca todas as faixas em uma única consulta; depois o cálculo é local.
+_RANGES_CACHE = {}
+
+def _load_cloud_ranges_cache(force=False):
+    client, user_id = _cloud_session()
+    if force or user_id not in _RANGES_CACHE:
+        res = (client.table('faixas').select('*')
+               .eq('user_id', user_id).order('minimo').execute())
+        grouped = {'pacotes': [], 'paradas': [], 'km': []}
+        for row in (res.data or []):
+            grouped.setdefault(row.get('tipo'), []).append(row)
+        _RANGES_CACHE[user_id] = grouped
+    return _RANGES_CACHE[user_id]
+
+def invalidate_ranges_cache(user_id=None):
+    if user_id:
+        _RANGES_CACHE.pop(user_id, None)
+    else:
+        _RANGES_CACHE.clear()
+
 def cloud_rate(tipo, qtd):
     q = num(qtd)
-    client, user_id = _cloud_session()
-    res = (client.table('faixas').select('valor,minimo,maximo')
-           .eq('user_id', user_id).eq('tipo', tipo)
-           .lte('minimo', q).gt('maximo', q)
-           .order('minimo', desc=True).limit(1).execute())
-    return num(res.data[0]['valor']) if res.data else 0
+    grouped = _load_cloud_ranges_cache()
+    matches = [r for r in grouped.get(tipo, [])
+               if q >= num(r.get('minimo')) and q < num(r.get('maximo'))]
+    if not matches:
+        return 0
+    matches.sort(key=lambda r: num(r.get('minimo')), reverse=True)
+    return num(matches[0].get('valor'))
 
 def cloud_ranges(tipo):
-    client, user_id = _cloud_session()
-    res = (client.table('faixas').select('*').eq('user_id', user_id)
-           .eq('tipo', tipo).order('minimo').execute())
-    return res.data or []
+    grouped = _load_cloud_ranges_cache()
+    return list(grouped.get(tipo, []))
 
 def add_cloud_range(tipo, mi, ma, valor):
     if mi in ('', None) or ma in ('', None) or valor in ('', None):
@@ -246,10 +266,12 @@ def add_cloud_range(tipo, mi, ma, valor):
         if mi < num(r['maximo']) and num(r['minimo']) < ma:
             raise ValueError('Essa faixa cruza outra já cadastrada.')
     client.table('faixas').insert({'user_id':user_id,'tipo':tipo,'minimo':mi,'maximo':ma,'valor':valor}).execute()
+    invalidate_ranges_cache(user_id)
 
 def delete_cloud_range(range_id):
     client, user_id = _cloud_session()
     client.table('faixas').delete().eq('id', range_id).eq('user_id', user_id).execute()
+    invalidate_ranges_cache(user_id)
 
 def _safe_storage_name(name):
     base = os.path.basename(name or 'comprovante')
@@ -352,6 +374,7 @@ def render_login():
     with ui.element('div').classes('login-shell w-full'):
         with ui.card().classes('login-card shadow-lg'):
             ui.label('🚚 RotaOS').classes('login-brand')
+            ui.label('O sistema operacional de quem vive de rota.').classes('muted text-sm')
             ui.label('O sistema operacional de quem vive de rota.').classes('login-muted mb-4')
             with ui.tabs().classes('w-full') as auth_tabs:
                 entrar_tab = ui.tab('Entrar')
@@ -1081,7 +1104,7 @@ def render_rotaos():
                             for p in proofs:
                                 name = p.get('nome_arquivo') or 'comprovante'
                                 mime = mimetypes.guess_type(name)[0] or 'application/octet-stream'
-                                with ui.row().classes('w-full items-center border rounded-lg p-2 gap-3'):
+                                with ui.row().classes('w-full items-center border rounded-lg p-2 gap-3') as proof_row:
                                     ui.icon('image' if mime.startswith('image/') else 'description')
                                     ui.label(name).classes('grow')
                                     def view_proof(proof=p, pmime=mime, pname=name):
@@ -1112,12 +1135,26 @@ def render_rotaos():
                                         except Exception as ex:
                                             ui.notify(f'Não foi possível baixar: {ex}', type='negative')
                                     ui.button('Baixar', icon='download', on_click=download_proof).props('flat dense no-caps')
-                                    def remove_proof(proof=p):
+                                    async def remove_proof(proof=p, row=proof_row):
                                         try:
                                             c, uid = _cloud_session()
-                                            c.storage.from_('comprovantes').remove([proof['arquivo_path']])
-                                            c.table('comprovantes').delete().eq('id', proof['id']).eq('user_id', uid).execute()
-                                            render_proofs(); ui.notify('Comprovante removido.')
+
+                                            # Banco e Storage são operações independentes.
+                                            # Executá-las em paralelo reduz a espera total.
+                                            import asyncio
+                                            await asyncio.gather(
+                                                asyncio.to_thread(
+                                                    lambda: c.storage.from_('comprovantes').remove([proof['arquivo_path']])
+                                                ),
+                                                asyncio.to_thread(
+                                                    lambda: c.table('comprovantes').delete()
+                                                    .eq('id', proof['id']).eq('user_id', uid).execute()
+                                                ),
+                                            )
+
+                                            # Remove da tela sem fazer um novo SELECT no Supabase.
+                                            row.delete()
+                                            ui.notify('Comprovante removido.', type='positive')
                                         except Exception as ex:
                                             ui.notify(f'Não foi possível remover: {ex}', type='negative')
                                     ui.button(icon='delete',on_click=remove_proof).props('flat dense color=negative')
@@ -1150,7 +1187,7 @@ def render_rotaos():
                                 cloud.table('rotas').delete().eq('id', r['cloud_id']).eq('user_id', user_id).execute()
                                 if r.get('id'):
                                     with con() as c: c.execute('DELETE FROM rotas WHERE id=?',(r['id'],))
-                                d.close(); refresh_history(); refresh_close(); ui.notify('Rota excluída.', type='positive')
+                                d.close(); refresh_history(); ui.notify('Rota excluída.', type='positive')
                             except Exception as ex:
                                 ui.notify(f'Não foi possível excluir: {ex}', type='negative')
                         ui.button('Excluir',on_click=dele).props('flat color=negative no-caps')
