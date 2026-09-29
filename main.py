@@ -143,6 +143,28 @@ def period_rows(search_term='', exact_date='', start_date='', end_date=''):
         rows=[r for r in rows if (r['data'] or '')<=end_date]
     return rows
 
+DISCOUNT_DESC_TAG = '[[DESCONTO_DESC:'
+DISCOUNT_DESC_END = ']]'
+
+def split_route_observation(value):
+    text = str(value or '')
+    desc = ''
+    start = text.find(DISCOUNT_DESC_TAG)
+    if start >= 0:
+        end = text.find(DISCOUNT_DESC_END, start)
+        if end >= 0:
+            desc = text[start + len(DISCOUNT_DESC_TAG):end].strip()
+            text = (text[:start] + text[end + len(DISCOUNT_DESC_END):]).strip()
+    return text, desc
+
+def join_route_observation(observation, discount_desc):
+    observation = str(observation or '').strip()
+    discount_desc = str(discount_desc or '').strip()
+    if discount_desc:
+        tag = f'{DISCOUNT_DESC_TAG}{discount_desc}{DISCOUNT_DESC_END}'
+        return (observation + '\n' + tag).strip()
+    return observation
+
 def pdf_route_parts(r):
     prod=[]; reimb=[]; disc=[]
     if num(r['fixo']): prod.append('Valor base: '+money(r['fixo']))
@@ -158,7 +180,10 @@ def pdf_route_parts(r):
     if r['combustivel_tratamento']=='Descontado no pagamento' and num(r['combustivel']):
         disc.append('Combustivel descontado: '+money(r['combustivel']))
     if num(r['estacionamento']): disc.append('Estacionamento: '+money(r['estacionamento']))
-    if num(r['outro_desconto']): disc.append('Outro desconto: '+money(r['outro_desconto']))
+    if num(r['outro_desconto']):
+        _, discount_desc = split_route_observation(r['observacao'])
+        label = 'Outra despesa' + (f' ({discount_desc})' if discount_desc else '')
+        disc.append(label + ': ' + money(r['outro_desconto']))
     return prod,reimb,disc
 
 @app.get('/historico/pdf')
@@ -187,17 +212,18 @@ def historico_pdf(search: str='', date_filter: str='', start: str='', end: str='
         cells=[]
         if prod: cells.append([Paragraph('<b>REMUNERACAO</b>',small),Paragraph('<br/>'.join(prod)+f"<br/><b>Total: {money(r['remuneracao'])}</b>",small)])
         if reimb: cells.append([Paragraph('<b>REEMBOLSOS</b>',small),Paragraph('<br/>'.join(reimb)+f"<br/><b>Total: {money(r['reembolsos'])}</b>",small)])
-        if disc: cells.append([Paragraph('<b>DESCONTOS</b>',small),Paragraph('<br/>'.join(disc)+f"<br/><b>Total: {money(r['descontos'])}</b>",small)])
+        if disc: cells.append([Paragraph('<b>DESPESAS DA ROTA</b>',small),Paragraph('<br/>'.join(disc)+f"<br/><b>Total: {money(r['descontos'])}</b>",small)])
         if cells:
             t=Table(cells,colWidths=[38*mm,137*mm])
             t.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'TOP'),('BACKGROUND',(0,0),(0,-1),colors.HexColor('#F2F6FA')),('BOX',(0,0),(-1,-1),.4,colors.HexColor('#C9D3DD')),('INNERGRID',(0,0),(-1,-1),.25,colors.HexColor('#D9E1E8')),('PADDING',(0,0),(-1,-1),5)]))
             story += [Spacer(1,2*mm),t]
-        story += [Spacer(1,2*mm),Paragraph(f"<b>A receber: {money(r['receber'])}</b>",body)]
-        if r['observacao']: story.append(Paragraph('Observacao: '+r['observacao'],small))
+        story += [Spacer(1,2*mm),Paragraph(f"<b>A receber da transportadora: {money(r['receber'])}</b>",body), Paragraph(f"<b>Resultado líquido: {money(r['resultado'])}</b>",body)]
+        clean_obs, _ = split_route_observation(r['observacao'])
+        if clean_obs: story.append(Paragraph('Observacao: '+clean_obs,small))
         story.append(Spacer(1,5*mm))
     summary=Table([
         ['RESUMO DO PERIODO',''],
-        ['Remuneracao',money(tr)],['Reembolsos',money(tre)],['Descontos',money(td)],['TOTAL A RECEBER',money(ta)]
+        ['Remuneracao',money(tr)],['Reembolsos',money(tre)],['Despesas da rota',money(td)],['TOTAL A RECEBER',money(ta)]
     ],colWidths=[95*mm,80*mm])
     summary.setStyle(TableStyle([('SPAN',(0,0),(1,0)),('BACKGROUND',(0,0),(1,0),colors.HexColor('#DCEEFF')),('FONTNAME',(0,0),(1,0),'Helvetica-Bold'),('FONTNAME',(0,4),(1,4),'Helvetica-Bold'),('ALIGN',(1,1),(1,-1),'RIGHT'),('BOX',(0,0),(-1,-1),.6,colors.HexColor('#7D9AB5')),('INNERGRID',(0,1),(-1,-1),.3,colors.HexColor('#CCD7E0')),('PADDING',(0,0),(-1,-1),7)]))
     story.append(summary)
@@ -317,9 +343,10 @@ def cloud_route_to_local(r):
     outro_reembolso = num(r.get('outro_reembolso'))
     pedagio = num(r.get('pedagio_reembolso'))
     reemb = pedagio + outro_reembolso + (combustivel if tratamento == 'Reembolsável' else 0)
-    descontos = (combustivel if tratamento == 'Descontado no pagamento' else 0) + num(r.get('estacionamento_desconto')) + num(r.get('outros_descontos'))
+    desconto_transportadora = combustivel if tratamento == 'Descontado no pagamento' else 0
+    despesas_rota = num(r.get('estacionamento_desconto')) + num(r.get('outros_descontos'))
     remuneracao = num(r.get('valor_base')) + ep + es + ek + bonus + outro_extra
-    receber = remuneracao + reemb - descontos
+    receber = remuneracao + reemb - desconto_transportadora
     local_id = None
     try:
         with con() as c:
@@ -336,7 +363,7 @@ def cloud_route_to_local(r):
         'bonus': bonus, 'outro_extra': outro_extra, 'pedagio': pedagio, 'outro_reembolso': outro_reembolso,
         'combustivel': combustivel, 'combustivel_tratamento': tratamento,
         'estacionamento': num(r.get('estacionamento_desconto')), 'outro_desconto': num(r.get('outros_descontos')),
-        'remuneracao': remuneracao, 'reembolsos': reemb, 'descontos': descontos, 'receber': receber, 'resultado': receber,
+        'remuneracao': remuneracao, 'reembolsos': reemb, 'descontos': despesas_rota, 'receber': receber, 'resultado': receber - despesas_rota,
         'observacao': str(r.get('observacao') or ''), 'status': 'Previsto', 'criado': str(r.get('created_at') or ''),
     }
 
@@ -614,7 +641,7 @@ def render_rotaos():
                     reimb_box = ui.column().classes('w-full gap-2 mt-3')
 
                 with ui.card().classes('card p-5 w-full section'):
-                    ui.label('➖ Descontos / custos').classes('title')
+                    ui.label('💸 Despesas da rota').classes('title')
                     ui.label('Só reduzem o pagamento quando realmente são descontados do motorista.').classes('muted mb-3')
                     with ui.row().classes('gap-2'):
                         bcomb = ui.button('+ Combustível').props('outline no-caps')
@@ -689,7 +716,7 @@ def render_rotaos():
                 with ui.element('div').classes('summary w-full mt-2'):
                     lrem = ui.label('REMUNERAÇÃO\nR$ 0,00').classes('metric font-bold')
                     lrei = ui.label('REEMBOLSOS\nR$ 0,00').classes('metric font-bold')
-                    ldes = ui.label('DESCONTOS\nR$ 0,00').classes('metric font-bold')
+                    ldes = ui.label('DESPESAS DA ROTA\nR$ 0,00').classes('metric font-bold')
                 with ui.element('div').classes('receive-hero w-full'):
                     ui.label('PREVISÃO A RECEBER').classes('receive-label')
                     lrec = ui.label('R$ 0,00').classes('receive-value')
@@ -724,14 +751,17 @@ def render_rotaos():
                 reemb_comb = comb if comb_mode == 'Reembolsável' else 0
                 desconto_comb = comb if comb_mode == 'Descontado no pagamento' else 0
                 reembolsos = ped+ore+reemb_comb
-                descontos = desconto_comb+est+od
-                receber = remuneracao+reembolsos-descontos
-                # Resultado pessoal: somente custos realmente bancados pelo motorista reduzem a remuneração.
-                resultado = receber
+                # O desconto feito pela transportadora reduz o valor do espelho.
+                desconto_transportadora = desconto_comb
+                # Despesas particulares da rota (ex.: ajudante) NÃO reduzem o valor que a transportadora deve pagar.
+                despesas_rota = est + od
+                receber = remuneracao + reembolsos - desconto_transportadora
+                resultado = receber - despesas_rota
+                descontos = despesas_rota
 
                 lrem.text='REMUNERAÇÃO\n'+money(remuneracao)
                 lrei.text='REEMBOLSOS\n'+money(reembolsos)
-                ldes.text='DESCONTOS\n'+money(descontos)
+                ldes.text='DESPESAS DA ROTA\n'+money(despesas_rota)
                 lrec.text=money(receber)
 
                 state.clear()
@@ -742,7 +772,7 @@ def render_rotaos():
                     bonus=bonus, outro_extra=oe, pedagio=ped, outro_reembolso=ore,
                     combustivel=comb, combustivel_tratamento=comb_mode, estacionamento=est, outro_desconto=od,
                     remuneracao=remuneracao, reembolsos=reembolsos, descontos=descontos,
-                    receber=receber, resultado=resultado, observacao=obs.value or ''
+                    receber=receber, resultado=resultado, observacao=join_route_observation(obs.value or '', fields['od_desc'].value if 'od_desc' in fields else '')
                 )
 
             def remove_dynamic(keys, element):
@@ -786,6 +816,10 @@ def render_rotaos():
                             on_click=lambda: remove_dynamic([k], row),
                         ).props('flat round dense color=grey-7').classes('close-chip')
                 fields[k] = x
+                if k == 'od':
+                    with box:
+                        desc = ui.input('Descrição da despesa (opcional)', placeholder='Ex.: ajudante, alimentação...').props('outlined dense').classes('w-full')
+                    fields['od_desc'] = desc
                 x.on('blur', lambda e: recalc())
                 recalc()
 
@@ -837,7 +871,7 @@ def render_rotaos():
 
             bcomb.on('click', fuel)
             best.on('click', lambda: cash('est', 'Estacionamento', disc_box))
-            bod.on('click', lambda: cash('od', 'Outro desconto', disc_box))
+            bod.on('click', lambda: cash('od', 'Outra despesa', disc_box))
 
             # Recalcula o valor base apenas quando o usuário sai do campo.
             # A observação não altera valores financeiros, então não chama recalc().
@@ -952,7 +986,6 @@ def render_rotaos():
                 with ui.row().classes('w-full items-end gap-4'):
                     ini = ui.input('De', value=start_default).props('type=date outlined').classes('w-44')
                     fim = ui.input('Até', value=today.isoformat()).props('type=date outlined').classes('w-44')
-                    empf = ui.input('Empresa (opcional)').props('outlined').classes('w-64')
                     ui.button('7 dias', on_click=lambda: set_period(7)).props('outline no-caps')
                     ui.button('15 dias', on_click=lambda: set_period(15)).props('outline no-caps')
                     ui.button('30 dias', on_click=lambda: set_period(30)).props('outline no-caps')
@@ -997,19 +1030,24 @@ def render_rotaos():
                         def total():
                             val=sum(num(r['receber']) for r,ch in checks if ch.value)
                             total_lbl.text='Selecionadas: '+money(val)
+                        select_all = ui.checkbox('Selecionar todas')
+                        def toggle_all(e):
+                            value = bool(select_all.value)
+                            for _, ch in checks:
+                                ch.set_value(value)
+                            total()
+                        select_all.on_value_change(toggle_all)
                         for r in rows:
                             with ui.row().classes('w-full items-center border-b py-2 gap-4'):
                                 ch=ui.checkbox()
                                 ui.label(r['data']).classes('w-24')
                                 ui.label(r['rota_id']).classes('w-36 font-bold')
-                                ui.label(r['empresa'] or '—').classes('w-40')
                                 ui.label(r['destino'] or '—').classes('grow')
                                 ui.label(money(r['receber'])).classes('font-bold')
                             checks.append((r,ch)); ch.on('update:model-value',lambda e:total())
                         ui.separator()
                         with ui.row().classes('w-full items-end gap-4'):
                             informado=ui.input('Valor informado no espelho (R$)').props('outlined').classes('w-64')
-                            obsf=ui.input('Observação do fechamento').props('outlined').classes('grow')
                             def reconcile():
                                 chosen=[r for r,ch in checks if ch.value]
                                 if not chosen: ui.notify('Selecione ao menos uma rota.',type='warning'); return
@@ -1017,11 +1055,10 @@ def render_rotaos():
                                 inf=num(informado.value); dif=inf-previsto
                                 with con() as c:
                                     c.execute('INSERT INTO fechamentos(inicio,fim,empresa,previsto,informado,diferenca,observacao,criado) VALUES(?,?,?,?,?,?,?,?)',
-                                              (ini.value,fim.value,empf.value or'',previsto,inf,dif,obsf.value or'',datetime.now().isoformat()))
+                                              (ini.value,fim.value,'',previsto,inf,dif,'',datetime.now().isoformat()))
                                 typ='positive' if abs(dif)<0.01 else 'warning'
                                 ui.notify(f'Previsto {money(previsto)} | Espelho {money(inf)} | Diferença {money(dif)}',type=typ)
                             ui.button('CONFERIR ESPELHO',icon='fact_check',on_click=reconcile).props('no-caps')
-            empf.on('input',lambda e:None)
             refresh_close()
 
         # ---------- HISTÓRICO ----------
@@ -1044,7 +1081,8 @@ def render_rotaos():
                     ui.label(f"Rota {r['rota_id']}").classes('text-2xl font-bold')
                     ui.label(f"{r['data']} • {r['destino'] or 'Sem destino'}").classes('muted')
                     if r['referencia']: ui.label('Rota: '+r['referencia'])
-                    if r['observacao']: ui.label('📝 '+r['observacao']).classes('muted')
+                    clean_obs, discount_desc = split_route_observation(r['observacao'])
+                    if clean_obs: ui.label('📝 '+clean_obs).classes('muted')
                     ui.separator()
                     with ui.element('div').classes('threecol w-full'):
                         with ui.column():
@@ -1086,11 +1124,11 @@ def render_rotaos():
                             if num(r['estacionamento']) != 0:
                                 ui.label('Estacionamento: '+money(r['estacionamento'])); has_custo = True
                             if num(r['outro_desconto']) != 0:
-                                ui.label('Outro: '+money(r['outro_desconto'])); has_custo = True
+                                ui.label(('Outra despesa' + (f' • {discount_desc}' if discount_desc else '')) + ': '+money(r['outro_desconto'])); has_custo = True
                             if has_custo and num(r['descontos']) != 0:
-                                ui.label('Total descontado: '+money(r['descontos'])).classes('font-bold')
+                                ui.label('Total de despesas da rota: '+money(r['descontos'])).classes('font-bold')
                             elif not has_custo:
-                                ui.label('Nenhum desconto/custo informado.').classes('muted text-sm')
+                                ui.label('Nenhuma despesa da rota informada.').classes('muted text-sm')
                     ui.separator()
                     ui.label('📎 COMPROVANTES DA ROTA').classes('font-bold text-lg')
                     ui.label('Guarde prints, fotos ou documentos relacionados a esta rota. Eles podem ajudar na conferência de pagamentos e na comprovação do serviço realizado.').classes('muted text-sm')
@@ -1184,7 +1222,67 @@ def render_rotaos():
                     ui.upload(label='ANEXAR COMPROVANTE',on_upload=upload_proof,auto_upload=True,max_file_size=8_000_000).props('accept="image/*,.pdf" flat color=primary').classes('mt-2')
                     ui.separator()
                     ui.label('PREVISÃO A RECEBER: '+money(r['receber'])).classes('text-xl font-bold')
+                    ui.label('RESULTADO LÍQUIDO: '+money(r['resultado'])).classes('text-lg font-bold')
                     with ui.row().classes('w-full justify-end'):
+                        def edit_route():
+                            clean_obs_edit, discount_desc_edit = split_route_observation(r['observacao'])
+                            with ui.dialog() as ed, ui.card().classes('w-[900px] max-w-full p-6 dialog-mobile'):
+                                ui.label('Editar rota').classes('text-2xl font-bold')
+                                ui.label('Altere os dados e salve na mesma rota. Os comprovantes permanecem vinculados.').classes('muted')
+                                with ui.element('div').classes('twocol w-full'):
+                                    e_data=ui.input('Data',value=r['data']).props('type=date outlined')
+                                    e_id=ui.input('ID da rota',value=r['rota_id']).props('outlined')
+                                    e_ref=ui.input('Rota',value=r['referencia']).props('outlined')
+                                    e_dest=ui.input('Destino/região',value=r['destino']).props('outlined')
+                                    e_fixo=ui.input('Valor base (R$)',value=str(r['fixo']).replace('.',',')).props('outlined inputmode=decimal')
+                                    e_pac=ui.input('Pacotes',value=str(r['pacotes'])).props('outlined inputmode=numeric')
+                                    e_par=ui.input('Paradas',value=str(r['paradas'])).props('outlined inputmode=numeric')
+                                    e_km=ui.input('KM',value=str(r['km'])).props('outlined inputmode=decimal')
+                                    e_bonus=ui.input('Bônus (R$)',value=str(r['bonus']).replace('.',',')).props('outlined inputmode=decimal')
+                                    e_oe=ui.input('Outro adicional (R$)',value=str(r['outro_extra']).replace('.',',')).props('outlined inputmode=decimal')
+                                    e_ped=ui.input('Pedágio reembolsável (R$)',value=str(r['pedagio']).replace('.',',')).props('outlined inputmode=decimal')
+                                    e_ore=ui.input('Outro reembolso (R$)',value=str(r['outro_reembolso']).replace('.',',')).props('outlined inputmode=decimal')
+                                    e_comb=ui.input('Combustível (R$)',value=str(r['combustivel']).replace('.',',')).props('outlined inputmode=decimal')
+                                    e_mode=ui.select(['Pago pela transportadora','Descontado no pagamento','Reembolsável'],value=r['combustivel_tratamento'] or 'Pago pela transportadora',label='Tratamento do combustível').props('outlined')
+                                    e_est=ui.input('Estacionamento (R$)',value=str(r['estacionamento']).replace('.',',')).props('outlined inputmode=decimal')
+                                    e_od=ui.input('Outra despesa (R$)',value=str(r['outro_desconto']).replace('.',',')).props('outlined inputmode=decimal')
+                                    e_od_desc=ui.input('Descrição da despesa (opcional)',value=discount_desc_edit).props('outlined')
+                                    e_obs=ui.input('Observações da rota',value=clean_obs_edit).props('outlined')
+                                def save_edit():
+                                    try:
+                                        pq=num(e_pac.value); sq=num(e_par.value); kq=num(e_km.value)
+                                        vp=rate('pacotes',pq); vs=rate('paradas',sq); vk=rate('km',kq)
+                                        ep=pq*vp; es=sq*vs; ek=vk if kq>0 else 0
+                                        f=num(e_fixo.value); bonus=num(e_bonus.value); oe=num(e_oe.value)
+                                        ped=num(e_ped.value); ore=num(e_ore.value); comb=num(e_comb.value)
+                                        est=num(e_est.value); od=num(e_od.value); mode=e_mode.value
+                                        rem=f+ep+es+ek+bonus+oe
+                                        reimb=ped+ore+(comb if mode=='Reembolsável' else 0)
+                                        desconto_transportadora=(comb if mode=='Descontado no pagamento' else 0)
+                                        despesas_rota=est+od
+                                        disc=despesas_rota
+                                        receber=rem+reimb-desconto_transportadora
+                                        resultado=receber-despesas_rota
+                                        observation=join_route_observation(e_obs.value,e_od_desc.value)
+                                        c, uid = _cloud_session()
+                                        payload={'data':e_data.value,'rota_id':e_id.value or '', 'rota':e_ref.value or '', 'destino':e_dest.value or '',
+                                            'valor_base':f,'pacotes':pq,'valor_pacotes':ep,'paradas':sq,'valor_paradas':es,'km':kq,'valor_km':ek,
+                                            'outros_adicionais':bonus+oe,'pedagio_reembolso':ped,'outros_reembolsos':ore+(comb if mode=='Reembolsável' else 0),
+                                            'combustivel_desconto':comb if mode=='Descontado no pagamento' else 0,'estacionamento_desconto':est,'outros_descontos':od,
+                                            'observacao':observation,'combustivel_valor':comb,'combustivel_tratamento':mode,'bonus':bonus,'outro_adicional':oe,'outro_reembolso':ore}
+                                        c.table('rotas').update(payload).eq('id',r['cloud_id']).eq('user_id',uid).execute()
+                                        if r.get('id'):
+                                            with con() as lc:
+                                                lc.execute('''UPDATE rotas SET data=?,rota_id=?,referencia=?,destino=?,fixo=?,pacotes=?,vp=?,ep=?,paradas=?,vs=?,es=?,km=?,vk=?,ek=?,bonus=?,outro_extra=?,pedagio=?,outro_reembolso=?,combustivel=?,combustivel_tratamento=?,estacionamento=?,outro_desconto=?,remuneracao=?,reembolsos=?,descontos=?,receber=?,resultado=?,observacao=? WHERE id=?''',
+                                                    (e_data.value,e_id.value or '',e_ref.value or '',e_dest.value or '',f,pq,vp,ep,sq,vs,es,kq,vk,ek,bonus,oe,ped,ore,comb,mode,est,od,rem,reimb,disc,receber,resultado,observation,r['id']))
+                                        ed.close(); d.close(); refresh_history(); refresh_close(); ui.notify('Rota atualizada.',type='positive')
+                                    except Exception as ex:
+                                        ui.notify(f'Não foi possível editar a rota: {ex}',type='negative',timeout=10000)
+                                with ui.row().classes('w-full justify-end'):
+                                    ui.button('Cancelar',on_click=ed.close).props('flat no-caps')
+                                    ui.button('SALVAR ALTERAÇÕES',icon='save',on_click=save_edit).props('no-caps color=primary')
+                            ed.open()
+                        ui.button('Editar rota',icon='edit',on_click=edit_route).props('flat color=primary no-caps')
                         def dele():
                             try:
                                 user_id = app.storage.user.get('user_id')
@@ -1304,13 +1402,14 @@ def render_rotaos():
                         cells=[]
                         if prod: cells.append([Paragraph('<b>REMUNERACAO</b>',small),Paragraph('<br/>'.join(prod)+f"<br/><b>Total: {money(r['remuneracao'])}</b>",small)])
                         if reimb: cells.append([Paragraph('<b>REEMBOLSOS</b>',small),Paragraph('<br/>'.join(reimb)+f"<br/><b>Total: {money(r['reembolsos'])}</b>",small)])
-                        if disc: cells.append([Paragraph('<b>DESCONTOS</b>',small),Paragraph('<br/>'.join(disc)+f"<br/><b>Total: {money(r['descontos'])}</b>",small)])
+                        if disc: cells.append([Paragraph('<b>DESPESAS DA ROTA</b>',small),Paragraph('<br/>'.join(disc)+f"<br/><b>Total: {money(r['descontos'])}</b>",small)])
                         if cells:
                             t=Table(cells,colWidths=[38*mm,137*mm]); t.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'TOP'),('BACKGROUND',(0,0),(0,-1),colors.HexColor('#F2F6FA')),('BOX',(0,0),(-1,-1),.4,colors.HexColor('#C9D3DD')),('INNERGRID',(0,0),(-1,-1),.25,colors.HexColor('#D9E1E8')),('PADDING',(0,0),(-1,-1),5)])); story += [Spacer(1,2*mm),t]
-                        story += [Spacer(1,2*mm),Paragraph(f"<b>A receber: {money(r['receber'])}</b>",body)]
-                        if r['observacao']: story.append(Paragraph('Observacao: '+r['observacao'],small))
+                        story += [Spacer(1,2*mm),Paragraph(f"<b>A receber da transportadora: {money(r['receber'])}</b>",body), Paragraph(f"<b>Resultado líquido: {money(r['resultado'])}</b>",body)]
+                        clean_obs, _ = split_route_observation(r['observacao'])
+                        if clean_obs: story.append(Paragraph('Observacao: '+clean_obs,small))
                         story.append(Spacer(1,5*mm))
-                    summary=Table([['RESUMO DO PERIODO',''],['Remuneracao',money(tr)],['Reembolsos',money(tre)],['Descontos',money(td)],['TOTAL A RECEBER',money(ta)]],colWidths=[95*mm,80*mm])
+                    summary=Table([['RESUMO DO PERIODO',''],['Remuneracao',money(tr)],['Reembolsos',money(tre)],['Despesas da rota',money(td)],['TOTAL A RECEBER',money(ta)]],colWidths=[95*mm,80*mm])
                     summary.setStyle(TableStyle([('SPAN',(0,0),(1,0)),('BACKGROUND',(0,0),(1,0),colors.HexColor('#DCEEFF')),('FONTNAME',(0,0),(1,0),'Helvetica-Bold'),('FONTNAME',(0,4),(1,4),'Helvetica-Bold'),('ALIGN',(1,1),(1,-1),'RIGHT'),('BOX',(0,0),(-1,-1),.6,colors.HexColor('#7D9AB5')),('INNERGRID',(0,1),(-1,-1),.3,colors.HexColor('#CCD7E0')),('PADDING',(0,0),(-1,-1),7)])); story.append(summary)
                     doc.build(story)
                     filename=f"RotaOS_fechamento_{ini_pdf or hdate.value or 'inicio'}_{fim_pdf or hdate.value or 'fim'}.pdf"
