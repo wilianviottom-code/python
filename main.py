@@ -786,9 +786,24 @@ def render_rotaos():
                 fields['comb']=x; fields['comb_mode']=mode; recalc()
 
             bcomb.on('click', fuel)
-            best.on('click', lambda: cash('est','Estacionamento',disc_box))
-            bod.on('click', lambda: cash('od','Outro desconto',disc_box))
-            fixo_i.on('input', lambda e: recalc())
+            best.on('click', lambda: cash('est', 'Estacionamento', disc_box))
+            bod.on('click', lambda: cash('od', 'Outro desconto', disc_box))
+
+            def atualizar_valor_fixo(e):
+                # O evento update:model-value traz o valor digitado antes de
+                # fixo_i.value estar necessariamente sincronizado no servidor.
+                # Atualizamos o componente primeiro e só depois recalculamos.
+                novo_valor = e.args
+                if isinstance(novo_valor, dict):
+                    novo_valor = novo_valor.get('value', novo_valor.get('modelValue', '0,00'))
+                elif isinstance(novo_valor, (list, tuple)):
+                    novo_valor = novo_valor[0] if novo_valor else '0,00'
+                fixo_i.value = novo_valor
+                recalc()
+
+            fixo_i.on('update:model-value', atualizar_valor_fixo)
+            fixo_i.on('change', lambda e: recalc())
+            fixo_i.on('blur', lambda e: recalc())
             obs.on('input', lambda e: recalc())
 
             def clear_form():
