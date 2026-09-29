@@ -125,6 +125,21 @@ def add_range(tipo, mi, ma, valor):
 
 init()
 
+def format_date_br(value):
+    """Exibe datas no padrão brasileiro DD/MM/AAAA sem alterar o formato ISO salvo no banco."""
+    if not value:
+        return '—'
+    text = str(value).strip()
+    try:
+        return datetime.strptime(text[:10], '%Y-%m-%d').strftime('%d/%m/%Y')
+    except (ValueError, TypeError):
+        return text
+
+def date_filename_br(value):
+    """Versão segura para nomes de arquivo: DD-MM-AAAA."""
+    formatted = format_date_br(value)
+    return formatted.replace('/', '-') if formatted != '—' else formatted
+
 def period_rows(search_term='', exact_date='', start_date='', end_date=''):
     with con() as c:
         rows=c.execute('SELECT * FROM rotas ORDER BY data DESC,id DESC').fetchall()
@@ -198,14 +213,14 @@ def historico_pdf(search: str='', date_filter: str='', start: str='', end: str='
     body=ParagraphStyle('rb',parent=styles['BodyText'],fontSize=9,leading=12)
     small=ParagraphStyle('rs',parent=styles['BodyText'],fontSize=8,leading=10)
     story=[Paragraph('RotaOS - Fechamento de rotas',title),Spacer(1,4*mm)]
-    periodo = f"Periodo: {start or date_filter or 'inicio'} a {end or date_filter or 'fim'}" if (start or end or date_filter) else 'Periodo: todas as rotas filtradas'
+    periodo = f"Periodo: {format_date_br(start or date_filter) if (start or date_filter) else 'inicio'} a {format_date_br(end or date_filter) if (end or date_filter) else 'fim'}" if (start or end or date_filter) else 'Periodo: todas as rotas filtradas'
     story += [Paragraph(periodo,body),Paragraph(f"Quantidade de rotas: {len(rows)}",body),Spacer(1,5*mm)]
     tr=tre=td=ta=0.0
     for i,r in enumerate(rows,1):
         tr+=num(r['remuneracao']); tre+=num(r['reembolsos']); td+=num(r['descontos']); ta+=num(r['receber'])
         prod,reimb,disc=pdf_route_parts(r)
         story.append(Paragraph(f"<b>{i}. Rota {r['rota_id'] or '-'}</b>",body))
-        meta=[r['data'] or '-']
+        meta=[format_date_br(r['data'])]
         if r['referencia']: meta.append('Rota: '+r['referencia'])
         if r['destino']: meta.append('Destino/regiao: '+r['destino'])
         story.append(Paragraph(' | '.join(meta),small))
@@ -465,6 +480,10 @@ def render_rotaos():
     .dynamic-row{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:9px}
 
     .history-row:hover{background:#f0f6ff}.section{min-height:240px}.mobile-actions{display:flex;gap:8px;flex-wrap:wrap}
+    .route-detail-expansion .q-item{min-height:36px;padding:4px 8px;font-weight:600}
+    .route-detail-expansion .q-expansion-item__content{padding-top:4px}
+    .history-row-selected{outline:2px solid #1976d2;background:#eef6ff!important;position:relative}
+    .history-select-check{position:absolute;top:8px;right:8px;z-index:2}
     .route-detail-card{border-radius:18px!important;padding:22px!important;gap:0!important}
     .route-detail-title{font-size:22px;font-weight:600;line-height:1.25;color:#0f172a}
     .route-detail-meta{font-size:13px;font-weight:400;color:#64748b}
@@ -1072,7 +1091,7 @@ def render_rotaos():
                         for r in rows:
                             with ui.row().classes('w-full items-center border-b py-2 gap-4'):
                                 ch=ui.checkbox()
-                                ui.label(r['data']).classes('w-24')
+                                ui.label(format_date_br(r['data'])).classes('w-24')
                                 ui.label(r['rota_id']).classes('w-36 font-bold')
                                 ui.label(r['destino'] or '—').classes('grow')
                                 ui.label(money(r['receber'])).classes('font-bold')
@@ -1106,64 +1125,69 @@ def render_rotaos():
                 search_btn=ui.button('PESQUISAR',icon='search').props('no-caps').classes('h-10')
                 pdf_btn=ui.button('GERAR PDF',icon='picture_as_pdf').props('no-caps color=primary').classes('h-10')
                 clear_btn=ui.button('LIMPAR',icon='filter_alt_off').props('outline no-caps').classes('h-10')
-            hb=ui.column().classes('w-full mt-4')
+            # Seleção múltipla: pressão longa entra no modo de seleção; depois, toque simples marca/desmarca.
+            selected_history_ids = set()
+            selection_bar = ui.row().classes('w-full items-center justify-between mt-3 px-2 py-1 rounded bg-blue-50')
+            hb=ui.column().classes('w-full mt-2')
 
             def details(r):
                 with ui.dialog() as d, ui.card().classes('relative w-[820px] max-w-full dialog-mobile route-detail-card'):
                     ui.button(icon='close', on_click=d.close).props('flat round dense').classes('route-detail-close')
                     ui.label(f"Rota {r['rota_id']}").classes('route-detail-title pr-10')
-                    meta_parts = [r['data']]
+                    meta_parts = [format_date_br(r['data'])]
                     if r['destino']:
                         meta_parts.append(r['destino'])
                     if r['referencia']:
                         meta_parts.append(r['referencia'])
                     ui.label(' • '.join(meta_parts)).classes('route-detail-meta mt-1')
                     _, discount_desc = split_route_observation(r['observacao'])
-                    with ui.element('div').classes('threecol w-full'):
-                        with ui.column():
-                            ui.label('Remuneração').classes('route-detail-section-title')
-                            if num(r['fixo']) != 0:
-                                ui.label('Valor base: '+money(r['fixo']))
-                            if num(r['pacotes']) != 0:
-                                ui.label(f"Pacotes: {r['pacotes']:g} × {money(r['vp'])} = {money(r['ep'])}")
-                            if num(r['paradas']) != 0:
-                                ui.label(f"Paradas: {r['paradas']:g} × {money(r['vs'])} = {money(r['es'])}")
-                            if num(r['km']) != 0:
-                                ui.label(f"KM: {r['km']:g} km • valor da faixa: {money(r['ek'])}")
-                            if num(r['bonus']) != 0:
-                                ui.label('Bônus: '+money(r['bonus']))
-                            if num(r['outro_extra']) != 0:
-                                ui.label('Outro adicional: '+money(r['outro_extra']))
-                            ui.label('Total: '+money(r['remuneracao'])).classes('route-detail-total')
-                        with ui.column():
-                            ui.label('Reembolsos').classes('route-detail-section-title')
-                            has_reembolso = False
-                            if num(r['pedagio']) != 0:
-                                ui.label('Pedágio: '+money(r['pedagio'])); has_reembolso = True
-                            if num(r['outro_reembolso']) != 0:
-                                ui.label('Outro: '+money(r['outro_reembolso'])); has_reembolso = True
-                            if r['combustivel_tratamento'] == 'Reembolsável' and num(r['combustivel']) != 0:
-                                ui.label('Combustível: '+money(r['combustivel'])); has_reembolso = True
-                            if has_reembolso:
-                                ui.label('Total: '+money(r['reembolsos'])).classes('route-detail-total')
-                            else:
-                                ui.label('Nenhum reembolso informado.').classes('muted text-sm')
-                        with ui.column():
-                            ui.label('Despesas da rota').classes('route-detail-section-title')
-                            has_custo = False
-                            if num(r['combustivel']) != 0:
-                                tratamento = r['combustivel_tratamento'] or 'Transportadora'
-                                if tratamento not in ('Reembolsável',):
-                                    ui.label(f"Combustível: {money(r['combustivel'])} • {tratamento}")
-                                    has_custo = True
-                            if num(r['estacionamento']) != 0:
-                                ui.label('Estacionamento: '+money(r['estacionamento'])); has_custo = True
-                            if num(r['outro_desconto']) != 0:
-                                ui.label(('Outra despesa' + (f' • {discount_desc}' if discount_desc else '')) + ': '+money(r['outro_desconto'])); has_custo = True
-                            if has_custo and num(r['descontos']) != 0:
-                                ui.label('Total: '+money(r['descontos'])).classes('route-detail-total')
-                            elif not has_custo:
-                                ui.label('Nenhuma despesa da rota informada.').classes('muted text-sm')
+                    # Informações secundárias ficam recolhidas por padrão para manter o modal compacto.
+                    with ui.expansion('Ver detalhes da rota', icon='info_outline').props('dense').classes('w-full route-detail-expansion'):
+                        with ui.element('div').classes('threecol w-full'):
+                            with ui.column():
+                                ui.label('Remuneração').classes('route-detail-section-title')
+                                if num(r['fixo']) != 0:
+                                    ui.label('Valor base: '+money(r['fixo']))
+                                if num(r['pacotes']) != 0:
+                                    ui.label(f"Pacotes: {r['pacotes']:g} × {money(r['vp'])} = {money(r['ep'])}")
+                                if num(r['paradas']) != 0:
+                                    ui.label(f"Paradas: {r['paradas']:g} × {money(r['vs'])} = {money(r['es'])}")
+                                if num(r['km']) != 0:
+                                    ui.label(f"KM: {r['km']:g} km • valor da faixa: {money(r['ek'])}")
+                                if num(r['bonus']) != 0:
+                                    ui.label('Bônus: '+money(r['bonus']))
+                                if num(r['outro_extra']) != 0:
+                                    ui.label('Outro adicional: '+money(r['outro_extra']))
+                                ui.label('Total: '+money(r['remuneracao'])).classes('route-detail-total')
+                            with ui.column():
+                                ui.label('Reembolsos').classes('route-detail-section-title')
+                                has_reembolso = False
+                                if num(r['pedagio']) != 0:
+                                    ui.label('Pedágio: '+money(r['pedagio'])); has_reembolso = True
+                                if num(r['outro_reembolso']) != 0:
+                                    ui.label('Outro: '+money(r['outro_reembolso'])); has_reembolso = True
+                                if r['combustivel_tratamento'] == 'Reembolsável' and num(r['combustivel']) != 0:
+                                    ui.label('Combustível: '+money(r['combustivel'])); has_reembolso = True
+                                if has_reembolso:
+                                    ui.label('Total: '+money(r['reembolsos'])).classes('route-detail-total')
+                                else:
+                                    ui.label('Nenhum reembolso informado.').classes('muted text-sm')
+                            with ui.column():
+                                ui.label('Despesas da rota').classes('route-detail-section-title')
+                                has_custo = False
+                                if num(r['combustivel']) != 0:
+                                    tratamento = r['combustivel_tratamento'] or 'Transportadora'
+                                    if tratamento not in ('Reembolsável',):
+                                        ui.label(f"Combustível: {money(r['combustivel'])} • {tratamento}")
+                                        has_custo = True
+                                if num(r['estacionamento']) != 0:
+                                    ui.label('Estacionamento: '+money(r['estacionamento'])); has_custo = True
+                                if num(r['outro_desconto']) != 0:
+                                    ui.label(('Outra despesa' + (f' • {discount_desc}' if discount_desc else '')) + ': '+money(r['outro_desconto'])); has_custo = True
+                                if has_custo and num(r['descontos']) != 0:
+                                    ui.label('Total: '+money(r['descontos'])).classes('route-detail-total')
+                                elif not has_custo:
+                                    ui.label('Nenhuma despesa da rota informada.').classes('muted text-sm')
                     with ui.column().classes('w-full route-docs'):
                         ui.label('Documentos da rota').classes('route-detail-section-title')
                     proof_box = ui.column().classes('w-full gap-2 mt-2')
@@ -1385,8 +1409,68 @@ def render_rotaos():
                             term in str(r.get('data') or '').lower()]
                 return rows
 
+            def render_selection_bar():
+                selection_bar.clear()
+                selection_bar.set_visibility(bool(selected_history_ids))
+                if not selected_history_ids:
+                    return
+                with selection_bar:
+                    ui.label(f'{len(selected_history_ids)} selecionada' + ('s' if len(selected_history_ids) != 1 else '')).classes('font-bold text-sm')
+                    with ui.row().classes('items-center gap-1'):
+                        def cancel_selection():
+                            selected_history_ids.clear()
+                            refresh_history()
+                        ui.button(icon='close', on_click=cancel_selection).props('flat round dense').tooltip('Cancelar seleção')
+                        def ask_delete_selected():
+                            count = len(selected_history_ids)
+                            if not count:
+                                return
+                            with ui.dialog() as confirm, ui.card().classes('dialog-mobile p-4'):
+                                ui.label(f'Excluir {count} rota' + ('s' if count != 1 else '') + '?').classes('text-lg font-bold')
+                                ui.label('Esta ação excluirá permanentemente as rotas selecionadas e seus dados.').classes('muted text-sm')
+                                with ui.row().classes('w-full justify-end gap-2 mt-3'):
+                                    ui.button('CANCELAR', on_click=confirm.close).props('flat no-caps')
+                                    def delete_selected():
+                                        try:
+                                            ids = list(selected_history_ids)
+                                            user_id = app.storage.user.get('user_id')
+                                            access = app.storage.user.get('access_token'); refresh = app.storage.user.get('refresh_token')
+                                            cloud = _new_supabase_client(); cloud.auth.set_session(access, refresh)
+                                            cloud.table('rotas').delete().in_('id', ids).eq('user_id', user_id).execute()
+                                            selected_history_ids.clear()
+                                            confirm.close(); refresh_history(); refresh_close()
+                                            ui.notify(f'{count} rota' + ('s excluídas.' if count != 1 else ' excluída.'), type='positive')
+                                        except Exception as ex:
+                                            ui.notify(f'Não foi possível excluir: {ex}', type='negative', timeout=10000)
+                                    ui.button('EXCLUIR', icon='delete', on_click=delete_selected).props('no-caps color=negative')
+                            confirm.open()
+                        ui.button(icon='delete', on_click=ask_delete_selected).props('flat round dense color=negative').tooltip('Excluir selecionadas')
+
+            def toggle_history_selection(r):
+                rid = r.get('cloud_id')
+                if rid is None:
+                    return
+                if rid in selected_history_ids:
+                    selected_history_ids.remove(rid)
+                else:
+                    selected_history_ids.add(rid)
+                refresh_history()
+
+            def open_or_select_history(r):
+                if selected_history_ids:
+                    toggle_history_selection(r)
+                else:
+                    details(r)
+
+            def start_history_selection(r):
+                rid = r.get('cloud_id')
+                if rid is not None and rid not in selected_history_ids:
+                    selected_history_ids.add(rid)
+                    refresh_history()
+
             def refresh_history():
                 hb.clear()
+                render_selection_bar()
                 try:
                     rows = cloud_history_rows()
                 except Exception as ex:
@@ -1401,12 +1485,18 @@ def render_rotaos():
                         return
                     for r in rows:
                         reemb = num(r['reembolsos']); receber = num(r['receber'])
-                        card = ui.card().classes('w-full card p-4 history-row cursor-pointer')
-                        card.on('click', lambda e, rr=r: details(rr))
+                        selected = r.get('cloud_id') in selected_history_ids
+                        card_classes = 'w-full card p-4 history-row cursor-pointer' + (' history-row-selected' if selected else '')
+                        card = ui.card().classes(card_classes)
+                        card.on('click', lambda e, rr=r: open_or_select_history(rr))
+                        # Em celular, pressão longa dispara contextmenu; no desktop, botão direito faz o mesmo.
+                        card.on('contextmenu', lambda e, rr=r: start_history_selection(rr), js_handler='(e) => { e.preventDefault(); }')
                         with card:
+                            if selected:
+                                ui.icon('check_circle').classes('history-select-check text-primary')
                             with ui.row().classes('w-full items-center gap-5 history-card-row'):
                                 with ui.column().classes('gap-0 w-32'):
-                                    ui.label(str(r['data'] or '—')).classes('font-bold')
+                                    ui.label(format_date_br(r['data'])).classes('font-bold')
                                 with ui.column().classes('gap-0 grow'):
                                     ui.label('Rota '+str(r['rota_id'] or '—')).classes('font-bold text-lg')
                                     destino = str(r['destino'] or 'Sem destino')
@@ -1430,14 +1520,14 @@ def render_rotaos():
                     body=ParagraphStyle('rb_cloud',parent=styles['BodyText'],fontSize=9,leading=12)
                     small=ParagraphStyle('rs_cloud',parent=styles['BodyText'],fontSize=8,leading=10)
                     story=[Paragraph('RotaOS - Fechamento de rotas',title),Spacer(1,4*mm)]
-                    periodo_txt = f"Periodo: {ini_pdf or hdate.value or 'inicio'} a {fim_pdf or hdate.value or 'fim'}" if (ini_pdf or fim_pdf or hdate.value) else 'Periodo: todas as rotas filtradas'
+                    periodo_txt = f"Periodo: {format_date_br(ini_pdf or hdate.value) if (ini_pdf or hdate.value) else 'inicio'} a {format_date_br(fim_pdf or hdate.value) if (fim_pdf or hdate.value) else 'fim'}" if (ini_pdf or fim_pdf or hdate.value) else 'Periodo: todas as rotas filtradas'
                     story += [Paragraph(periodo_txt,body),Paragraph(f"Quantidade de rotas: {len(rows)}",body),Spacer(1,5*mm)]
                     tr=tre=td=ta=0.0
                     for i,r in enumerate(rows,1):
                         tr+=num(r['remuneracao']); tre+=num(r['reembolsos']); td+=num(r['descontos']); ta+=num(r['receber'])
                         prod,reimb,disc=pdf_route_parts(r)
                         story.append(Paragraph(f"<b>{i}. Rota {r['rota_id'] or '-'}</b>",body))
-                        meta=[r['data'] or '-']
+                        meta=[format_date_br(r['data'])]
                         if r['referencia']: meta.append('Rota: '+r['referencia'])
                         if r['destino']: meta.append('Destino/regiao: '+r['destino'])
                         story.append(Paragraph(' | '.join(meta),small))
@@ -1454,7 +1544,7 @@ def render_rotaos():
                     summary=Table([['RESUMO DO PERIODO',''],['Remuneracao',money(tr)],['Reembolsos',money(tre)],['Despesas da rota',money(td)],['TOTAL A RECEBER',money(ta)]],colWidths=[95*mm,80*mm])
                     summary.setStyle(TableStyle([('SPAN',(0,0),(1,0)),('BACKGROUND',(0,0),(1,0),colors.HexColor('#DCEEFF')),('FONTNAME',(0,0),(1,0),'Helvetica-Bold'),('FONTNAME',(0,4),(1,4),'Helvetica-Bold'),('ALIGN',(1,1),(1,-1),'RIGHT'),('BOX',(0,0),(-1,-1),.6,colors.HexColor('#7D9AB5')),('INNERGRID',(0,1),(-1,-1),.3,colors.HexColor('#CCD7E0')),('PADDING',(0,0),(-1,-1),7)])); story.append(summary)
                     doc.build(story)
-                    filename=f"RotaOS_fechamento_{ini_pdf or hdate.value or 'inicio'}_{fim_pdf or hdate.value or 'fim'}.pdf"
+                    filename=f"RotaOS_fechamento_{date_filename_br(ini_pdf or hdate.value) if (ini_pdf or hdate.value) else 'inicio'}_{date_filename_br(fim_pdf or hdate.value) if (fim_pdf or hdate.value) else 'fim'}.pdf"
                     ui.download(buf.getvalue(), filename=filename)
                     buf.close()
                 except Exception as ex:
