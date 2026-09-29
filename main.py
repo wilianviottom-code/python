@@ -454,10 +454,16 @@ def render_rotaos():
     </script>
     """)
 
-    with ui.header().classes('px-8 justify-between'):
-        ui.label('🚚 RotaOS V2.6 ONLINE').classes('text-xl font-bold')
+    with ui.header().classes('px-8'):
+        with ui.row().classes('w-full items-center justify-between'):
+        # MARCA - lado esquerdo
+            with ui.column().classes('gap-0'):
+                ui.label('RotaOS').classes('text-xl font-bold leading-tight')
+                ui.label('o sistema operacional de quem vive de rota.').classes('text-xs text-white/80')
+        
+        # INFORMAÇÕES - lado direito
         with ui.row().classes('items-center gap-2'):
-            ui.label('Produção • Recebimentos • Conferência').classes('text-sm')
+            ui.label('Produção | Recebimentos | Conferência').classes('text-sm')
 
             def _logout():
                 try:
